@@ -10,7 +10,76 @@ const validate = (req, res, next) => {
   next();
 };
 
-// POST /api/meters — Create a new meter
+/**
+ * @swagger
+ * /api/meters:
+ *   post:
+ *     summary: Register a new meter
+ *     tags: [Meters]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [meterId, customerId, location]
+ *             properties:
+ *               meterId:
+ *                 type: string
+ *                 example: MTR-001
+ *               customerId:
+ *                 type: string
+ *                 example: CUST-001
+ *               meterType:
+ *                 type: string
+ *                 enum: [single-phase, three-phase, industrial]
+ *                 example: single-phase
+ *               location:
+ *                 type: object
+ *                 required: [address, city]
+ *                 properties:
+ *                   address:
+ *                     type: string
+ *                     example: 123 Main Street
+ *                   city:
+ *                     type: string
+ *                     example: Colombo
+ *                   district:
+ *                     type: string
+ *                     example: Western
+ *               installedDate:
+ *                 type: string
+ *                 format: date-time
+ *                 example: 2024-01-15T00:00:00.000Z
+ *     responses:
+ *       201:
+ *         description: Meter registered successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: Meter registered successfully
+ *                 data:
+ *                   $ref: '#/components/schemas/Meter'
+ *       409:
+ *         description: Meter already exists
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.post(
   "/",
   [
@@ -42,7 +111,62 @@ router.post(
   }
 );
 
-// GET /api/meters — Get all meters
+/**
+ * @swagger
+ * /api/meters:
+ *   get:
+ *     summary: Get all meters
+ *     tags: [Meters]
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [active, inactive, faulty, replaced]
+ *         description: Filter by meter status
+ *       - in: query
+ *         name: meterType
+ *         schema:
+ *           type: string
+ *           enum: [single-phase, three-phase, industrial]
+ *         description: Filter by meter type
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           example: 1
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           example: 10
+ *         description: Results per page
+ *     responses:
+ *       200:
+ *         description: List of meters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 total:
+ *                   type: integer
+ *                   example: 5
+ *                 page:
+ *                   type: integer
+ *                   example: 1
+ *                 pages:
+ *                   type: integer
+ *                   example: 1
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Meter'
+ */
 router.get("/", async (req, res) => {
   try {
     const { status, meterType, page = 1, limit = 10 } = req.query;
@@ -63,7 +187,38 @@ router.get("/", async (req, res) => {
   }
 });
 
-// GET /api/meters/customer/:customerId — Get meters by customer
+/**
+ * @swagger
+ * /api/meters/customer/{customerId}:
+ *   get:
+ *     summary: Get all meters for a customer
+ *     tags: [Meters]
+ *     parameters:
+ *       - in: path
+ *         name: customerId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: CUST-001
+ *     responses:
+ *       200:
+ *         description: List of meters for the customer
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 count:
+ *                   type: integer
+ *                   example: 2
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Meter'
+ */
 router.get("/customer/:customerId", async (req, res) => {
   try {
     const meters = await Meter.find({ customerId: req.params.customerId }).sort({ createdAt: -1 });
@@ -73,7 +228,39 @@ router.get("/customer/:customerId", async (req, res) => {
   }
 });
 
-// GET /api/meters/:meterId — Get meter by meterId
+/**
+ * @swagger
+ * /api/meters/{meterId}:
+ *   get:
+ *     summary: Get a meter by meter ID
+ *     tags: [Meters]
+ *     parameters:
+ *       - in: path
+ *         name: meterId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: MTR-001
+ *     responses:
+ *       200:
+ *         description: Meter details
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   $ref: '#/components/schemas/Meter'
+ *       404:
+ *         description: Meter not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.get("/:meterId", async (req, res) => {
   try {
     const meter = await Meter.findOne({ meterId: req.params.meterId });
@@ -86,7 +273,69 @@ router.get("/:meterId", async (req, res) => {
   }
 });
 
-// PUT /api/meters/:meterId — Update meter
+/**
+ * @swagger
+ * /api/meters/{meterId}:
+ *   put:
+ *     summary: Update meter details
+ *     tags: [Meters]
+ *     parameters:
+ *       - in: path
+ *         name: meterId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: MTR-001
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               status:
+ *                 type: string
+ *                 enum: [active, inactive, faulty, replaced]
+ *                 example: inactive
+ *               meterType:
+ *                 type: string
+ *                 enum: [single-phase, three-phase, industrial]
+ *                 example: three-phase
+ *               location:
+ *                 type: object
+ *                 properties:
+ *                   address:
+ *                     type: string
+ *                     example: 456 New Street
+ *                   city:
+ *                     type: string
+ *                     example: Kandy
+ *                   district:
+ *                     type: string
+ *                     example: Central
+ *     responses:
+ *       200:
+ *         description: Meter updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: Meter updated successfully
+ *                 data:
+ *                   $ref: '#/components/schemas/Meter'
+ *       404:
+ *         description: Meter not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.put(
   "/:meterId",
   [
@@ -116,7 +365,33 @@ router.put(
   }
 );
 
-// DELETE /api/meters/:meterId — Delete meter
+/**
+ * @swagger
+ * /api/meters/{meterId}:
+ *   delete:
+ *     summary: Delete a meter
+ *     tags: [Meters]
+ *     parameters:
+ *       - in: path
+ *         name: meterId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: MTR-001
+ *     responses:
+ *       200:
+ *         description: Meter deleted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Success'
+ *       404:
+ *         description: Meter not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.delete("/:meterId", async (req, res) => {
   try {
     const meter = await Meter.findOneAndDelete({ meterId: req.params.meterId });

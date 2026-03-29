@@ -11,7 +11,77 @@ const validate = (req, res, next) => {
   next();
 };
 
-// POST /api/readings — Submit a new reading
+/**
+ * @swagger
+ * /api/readings:
+ *   post:
+ *     summary: Submit a new meter reading
+ *     tags: [Readings]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [meterId, customerId, previousReading, currentReading]
+ *             properties:
+ *               meterId:
+ *                 type: string
+ *                 example: MTR-001
+ *               customerId:
+ *                 type: string
+ *                 example: CUST-001
+ *               previousReading:
+ *                 type: number
+ *                 example: 100
+ *               currentReading:
+ *                 type: number
+ *                 example: 250
+ *               readBy:
+ *                 type: string
+ *                 example: field-officer
+ *               notes:
+ *                 type: string
+ *                 example: Monthly reading - January
+ *               readingDate:
+ *                 type: string
+ *                 format: date-time
+ *                 example: 2025-01-31T10:00:00.000Z
+ *     responses:
+ *       201:
+ *         description: Reading submitted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: Meter reading submitted successfully
+ *                 data:
+ *                   $ref: '#/components/schemas/MeterReading'
+ *       400:
+ *         description: Validation error or meter not active
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: Meter not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       409:
+ *         description: Reading already exists for this month
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.post(
   "/",
   [
@@ -44,14 +114,8 @@ router.post(
       const unitsConsumed = currentReading - previousReading;
 
       const reading = new MeterReading({
-        meterId,
-        customerId,
-        previousReading,
-        currentReading,
-        unitsConsumed,
-        readingDate: date,
-        readBy: readBy || "field-officer",
-        notes,
+        meterId, customerId, previousReading, currentReading, unitsConsumed,
+        readingDate: date, readBy: readBy || "field-officer", notes,
       });
 
       await reading.save();
@@ -68,7 +132,60 @@ router.post(
   }
 );
 
-// GET /api/readings — Get all readings
+/**
+ * @swagger
+ * /api/readings:
+ *   get:
+ *     summary: Get all readings
+ *     tags: [Readings]
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [pending, billed, disputed]
+ *         description: Filter by reading status
+ *       - in: query
+ *         name: readingMonth
+ *         schema:
+ *           type: string
+ *           example: 2025-01
+ *         description: Filter by month (YYYY-MM)
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           example: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           example: 10
+ *     responses:
+ *       200:
+ *         description: List of readings
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 total:
+ *                   type: integer
+ *                   example: 10
+ *                 page:
+ *                   type: integer
+ *                   example: 1
+ *                 pages:
+ *                   type: integer
+ *                   example: 1
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/MeterReading'
+ */
 router.get("/", async (req, res) => {
   try {
     const { status, readingMonth, page = 1, limit = 10 } = req.query;
@@ -89,7 +206,39 @@ router.get("/", async (req, res) => {
   }
 });
 
-// GET /api/readings/meter/:meterId/latest — Get latest reading (must be before /:id)
+/**
+ * @swagger
+ * /api/readings/meter/{meterId}/latest:
+ *   get:
+ *     summary: Get the latest reading for a meter
+ *     tags: [Readings]
+ *     parameters:
+ *       - in: path
+ *         name: meterId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: MTR-001
+ *     responses:
+ *       200:
+ *         description: Latest meter reading
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   $ref: '#/components/schemas/MeterReading'
+ *       404:
+ *         description: No readings found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.get("/meter/:meterId/latest", async (req, res) => {
   try {
     const reading = await MeterReading.findOne({ meterId: req.params.meterId }).sort({ readingDate: -1 });
@@ -102,7 +251,38 @@ router.get("/meter/:meterId/latest", async (req, res) => {
   }
 });
 
-// GET /api/readings/meter/:meterId — Get readings by meter
+/**
+ * @swagger
+ * /api/readings/meter/{meterId}:
+ *   get:
+ *     summary: Get all readings for a meter
+ *     tags: [Readings]
+ *     parameters:
+ *       - in: path
+ *         name: meterId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: MTR-001
+ *     responses:
+ *       200:
+ *         description: List of readings for the meter
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 count:
+ *                   type: integer
+ *                   example: 3
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/MeterReading'
+ */
 router.get("/meter/:meterId", async (req, res) => {
   try {
     const readings = await MeterReading.find({ meterId: req.params.meterId }).sort({ readingDate: -1 });
@@ -112,7 +292,44 @@ router.get("/meter/:meterId", async (req, res) => {
   }
 });
 
-// GET /api/readings/customer/:customerId — Get readings by customer
+/**
+ * @swagger
+ * /api/readings/customer/{customerId}:
+ *   get:
+ *     summary: Get all readings for a customer
+ *     tags: [Readings]
+ *     parameters:
+ *       - in: path
+ *         name: customerId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: CUST-001
+ *       - in: query
+ *         name: readingMonth
+ *         schema:
+ *           type: string
+ *           example: 2025-01
+ *         description: Filter by month (YYYY-MM)
+ *     responses:
+ *       200:
+ *         description: List of readings for the customer
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 count:
+ *                   type: integer
+ *                   example: 3
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/MeterReading'
+ */
 router.get("/customer/:customerId", async (req, res) => {
   try {
     const { readingMonth } = req.query;
@@ -126,7 +343,39 @@ router.get("/customer/:customerId", async (req, res) => {
   }
 });
 
-// GET /api/readings/:id — Get reading by ID
+/**
+ * @swagger
+ * /api/readings/{id}:
+ *   get:
+ *     summary: Get a reading by ID
+ *     tags: [Readings]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: 64abc1234567890abcdef123
+ *     responses:
+ *       200:
+ *         description: Reading details
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   $ref: '#/components/schemas/MeterReading'
+ *       404:
+ *         description: Reading not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.get("/:id", async (req, res) => {
   try {
     const reading = await MeterReading.findById(req.params.id);
@@ -139,7 +388,54 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// PUT /api/readings/:id/status — Update reading status
+/**
+ * @swagger
+ * /api/readings/{id}/status:
+ *   put:
+ *     summary: Update reading status
+ *     tags: [Readings]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: 64abc1234567890abcdef123
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [status]
+ *             properties:
+ *               status:
+ *                 type: string
+ *                 enum: [pending, billed, disputed]
+ *                 example: billed
+ *     responses:
+ *       200:
+ *         description: Status updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: Reading status updated to 'billed'
+ *                 data:
+ *                   $ref: '#/components/schemas/MeterReading'
+ *       404:
+ *         description: Reading not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.put(
   "/:id/status",
   [
@@ -164,7 +460,33 @@ router.put(
   }
 );
 
-// DELETE /api/readings/:id — Delete a reading
+/**
+ * @swagger
+ * /api/readings/{id}:
+ *   delete:
+ *     summary: Delete a reading
+ *     tags: [Readings]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: 64abc1234567890abcdef123
+ *     responses:
+ *       200:
+ *         description: Reading deleted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Success'
+ *       404:
+ *         description: Reading not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.delete("/:id", async (req, res) => {
   try {
     const reading = await MeterReading.findByIdAndDelete(req.params.id);
