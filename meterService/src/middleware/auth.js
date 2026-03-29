@@ -1,15 +1,17 @@
-// Simple API key / internal service auth middleware
-// For inter-service communication, services can pass x-service-secret header
+// ─────────────────────────────────────────────────────────────────
+// auth.js — Inter-service authentication middleware
+//
+// When Bill Service or Payment Service calls Meter Service,
+// they pass the header:  x-service-secret: <SERVICE_SECRET>
+// This middleware checks that header to allow internal calls.
+// ─────────────────────────────────────────────────────────────────
 
 const authMiddleware = (req, res, next) => {
-  // Allow internal service-to-service calls (e.g., Bill Service calling Meter Service)
   const serviceSecret = req.headers["x-service-secret"];
   if (serviceSecret && serviceSecret === process.env.SERVICE_SECRET) {
     return next();
   }
-
-  // For now, allow all requests (expand with JWT in production)
-  // In a real system, verify JWT from API Gateway
+  // Allow all for now — add JWT from API Gateway in production
   next();
 };
 
