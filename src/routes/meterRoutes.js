@@ -1,11 +1,16 @@
 const express = require("express");
 const router = express.Router();
-const { body, param } = require("express-validator");
-const validate = require("../middleware/validate");
-const meterController = require("../controllers/meterController");
+const { body, param, validationResult } = require("express-validator");
+const Meter = require("../models/Meter");
 
-// @route   POST /api/meters
-// @desc    Register a new meter
+const validate = (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty())
+    return res.status(400).json({ success: false, errors: errors.array() });
+  next();
+};
+
+// POST /api/meters — Create a new meter
 router.post(
   "/",
   [
@@ -19,38 +24,109 @@ router.post(
       .withMessage("Invalid meter type"),
   ],
   validate,
-  meterController.createMeter
+  async (req, res) => {
+    try {
+      const { meterId, customerId, meterType, location, installedDate } = req.body;
+
+      const existing = await Meter.findOne({ meterId });
+      if (existing)
+        return res.status(409).json({ success: false, message: `Meter '${meterId}' already exists` });
+
+      const meter = new Meter({ meterId, customerId, meterType, location, installedDate });
+      await meter.save();
+
+      res.status(201).json({ success: true, message: "Meter registered successfully", data: meter });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
 );
 
-// @route   GET /api/meters
-// @desc    Get all meters
-router.get("/", meterController.getAllMeters);
+// GET /api/meters — Get all meters
+router.get("/", async (req, res) => {
+  try {
+    const { status, meterType, page = 1, limit = 10 } = req.query;
+    const filter = {};
+    if (status) filter.status = status;
+    if (meterType) filter.meterType = meterType;
 
-// @route   GET /api/meters/:meterId
-// @desc    Get meter by meterId
-router.get("/:meterId", meterController.getMeterById);
+    const meters = await Meter.find(filter)
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(Number(limit));
 
-// @route   GET /api/meters/customer/:customerId
-// @desc    Get all meters for a customer
-router.get("/customer/:customerId", meterController.getMetersByCustomer);
+    const total = await Meter.countDocuments(filter);
 
-// @route   PUT /api/meters/:meterId
-// @desc    Update meter details
+    res.status(200).json({ success: true, total, page: Number(page), pages: Math.ceil(total / limit), data: meters });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// GET /api/meters/customer/:customerId — Get meters by customer
+router.get("/customer/:customerId", async (req, res) => {
+  try {
+    const meters = await Meter.find({ customerId: req.params.customerId }).sort({ createdAt: -1 });
+    res.status(200).json({ success: true, count: meters.length, data: meters });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// GET /api/meters/:meterId — Get meter by meterId
+router.get("/:meterId", async (req, res) => {
+  try {
+    const meter = await Meter.findOne({ meterId: req.params.meterId });
+    if (!meter)
+      return res.status(404).json({ success: false, message: `Meter '${req.params.meterId}' not found` });
+
+    res.status(200).json({ success: true, data: meter });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// PUT /api/meters/:meterId — Update meter
 router.put(
   "/:meterId",
   [
-    param("meterId").notEmpty().withMessage("Meter ID is required"),
+    param("meterId").notEmpty(),
     body("status")
       .optional()
       .isIn(["active", "inactive", "faulty", "replaced"])
       .withMessage("Invalid status"),
   ],
   validate,
-  meterController.updateMeter
+  async (req, res) => {
+    try {
+      const allowedUpdates = ["status", "meterType", "location", "lastReadingDate", "lastReadingValue", "totalUnitsConsumed"];
+      const updates = {};
+      allowedUpdates.forEach((field) => {
+        if (req.body[field] !== undefined) updates[field] = req.body[field];
+      });
+
+      const meter = await Meter.findOneAndUpdate({ meterId: req.params.meterId }, updates, { new: true, runValidators: true });
+      if (!meter)
+        return res.status(404).json({ success: false, message: `Meter '${req.params.meterId}' not found` });
+
+      res.status(200).json({ success: true, message: "Meter updated successfully", data: meter });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
 );
 
-// @route   DELETE /api/meters/:meterId
-// @desc    Delete a meter
-router.delete("/:meterId", meterController.deleteMeter);
+// DELETE /api/meters/:meterId — Delete meter
+router.delete("/:meterId", async (req, res) => {
+  try {
+    const meter = await Meter.findOneAndDelete({ meterId: req.params.meterId });
+    if (!meter)
+      return res.status(404).json({ success: false, message: `Meter '${req.params.meterId}' not found` });
+
+    res.status(200).json({ success: true, message: "Meter deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
 module.exports = router;
