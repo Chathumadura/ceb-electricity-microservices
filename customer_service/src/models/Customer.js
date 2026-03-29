@@ -3,6 +3,10 @@ const bcrypt = require('bcryptjs');
 
 const customerSchema = new mongoose.Schema(
   {
+    customerId: {
+      type: String,
+      unique: true,
+    },
     name: {
       type: String,
       required: [true, 'Name is required'],
@@ -41,15 +45,29 @@ const customerSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Pre-save: hash password & generate account number
+// ✅ UPDATED PRE-SAVE (NO NEW FILES USED)
 customerSchema.pre('save', async function (next) {
-  if (!this.accountNumber) {
-    this.accountNumber = 'CEB' + Math.floor(100000 + Math.random() * 900000);
+  try {
+    // 🔹 Generate customerId like CUST-001
+    if (!this.customerId) {
+      const count = await mongoose.model('Customer').countDocuments();
+      this.customerId = `CUST-${String(count + 1).padStart(3, '0')}`;
+    }
+
+    // 🔹 Generate account number
+    if (!this.accountNumber) {
+      this.accountNumber = 'CEB' + Math.floor(100000 + Math.random() * 900000);
+    }
+
+    // 🔹 Hash password
+    if (this.isModified('password')) {
+      this.password = await bcrypt.hash(this.password, 10);
+    }
+
+    next();
+  } catch (err) {
+    next(err);
   }
-  if (this.isModified('password')) {
-    this.password = await bcrypt.hash(this.password, 10);
-  }
-  next();
 });
 
 // Compare password
