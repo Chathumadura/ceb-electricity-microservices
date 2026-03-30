@@ -11,19 +11,218 @@ const validate = (req, res, next) => {
   next();
 };
 
+/**
+ * @swagger
+ * tags:
+ *   name: Readings
+ *   description: Meter reading management
+ *
+ * /api/readings:
+ *   post:
+ *     summary: Submit a new meter reading
+ *     tags: [Readings]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [meterId, customerId, previousReading, currentReading]
+ *             properties:
+ *               meterId:
+ *                 type: string
+ *                 example: MTR-001
+ *               customerId:
+ *                 type: string
+ *                 example: CUST-001
+ *               previousReading:
+ *                 type: number
+ *                 example: 100
+ *               currentReading:
+ *                 type: number
+ *                 example: 250
+ *               readBy:
+ *                 type: string
+ *                 example: field-officer
+ *               notes:
+ *                 type: string
+ *                 example: Monthly reading March 2025
+ *               readingDate:
+ *                 type: string
+ *                 format: date
+ *                 example: "2025-03-15"
+ *     responses:
+ *       201:
+ *         description: Reading submitted successfully
+ *       400:
+ *         description: Meter not active or invalid reading
+ *       404:
+ *         description: Meter not found
+ *       409:
+ *         description: Reading already exists for this month
+ *
+ *   get:
+ *     summary: Get all readings
+ *     tags: [Readings]
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [pending, billed, disputed]
+ *         description: Filter by status
+ *       - in: query
+ *         name: readingMonth
+ *         schema:
+ *           type: string
+ *           example: "2025-03"
+ *         description: Filter by month (YYYY-MM)
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           example: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           example: 10
+ *     responses:
+ *       200:
+ *         description: List of all readings
+ *
+ * /api/readings/meter/{meterId}/latest:
+ *   get:
+ *     summary: Get the latest reading for a meter (used by Bill Service)
+ *     tags: [Readings]
+ *     parameters:
+ *       - in: path
+ *         name: meterId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: MTR-001
+ *     responses:
+ *       200:
+ *         description: Latest reading found
+ *       404:
+ *         description: No readings found for this meter
+ *
+ * /api/readings/meter/{meterId}:
+ *   get:
+ *     summary: Get all readings for a meter
+ *     tags: [Readings]
+ *     parameters:
+ *       - in: path
+ *         name: meterId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: MTR-001
+ *     responses:
+ *       200:
+ *         description: Readings found
+ *
+ * /api/readings/customer/{customerId}:
+ *   get:
+ *     summary: Get readings by customer ID (used by Bill Service to generate bill)
+ *     tags: [Readings]
+ *     parameters:
+ *       - in: path
+ *         name: customerId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: CUST-001
+ *       - in: query
+ *         name: readingMonth
+ *         schema:
+ *           type: string
+ *           example: "2025-03"
+ *         description: Filter by specific month
+ *     responses:
+ *       200:
+ *         description: Readings found for customer
+ *
+ * /api/readings/{id}:
+ *   get:
+ *     summary: Get a single reading by MongoDB ID
+ *     tags: [Readings]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: 64abc123def456789
+ *     responses:
+ *       200:
+ *         description: Reading found
+ *       404:
+ *         description: Reading not found
+ *
+ *   delete:
+ *     summary: Delete a reading
+ *     tags: [Readings]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: 64abc123def456789
+ *     responses:
+ *       200:
+ *         description: Reading deleted
+ *       404:
+ *         description: Reading not found
+ *
+ * /api/readings/{id}/status:
+ *   put:
+ *     summary: Update reading status (Bill Service calls this after billing)
+ *     tags: [Readings]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: 64abc123def456789
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [status]
+ *             properties:
+ *               status:
+ *                 type: string
+ *                 enum: [pending, billed, disputed]
+ *                 example: billed
+ *     responses:
+ *       200:
+ *         description: Status updated successfully
+ *       404:
+ *         description: Reading not found
+ */
+
 // ─────────────────────────────────────────────────────────────────
-// POST /api/readings
-// Called by: Field officer / Admin — submits monthly meter reading
-// After this, Bill Service will call GET /api/readings/customer/:customerId
-// to get unitsConsumed and generate the bill
+// POST /api/readings — Submit a new meter reading
+// After saving, Bill Service calls GET /api/readings/customer/:id
+// to get unitsConsumed and generate bill
 // ─────────────────────────────────────────────────────────────────
 router.post(
   "/",
   [
     body("meterId").notEmpty().withMessage("Meter ID is required"),
     body("customerId").notEmpty().withMessage("Customer ID is required"),
-    body("currentReading").isFloat({ min: 0 }).withMessage("Current reading must be a positive number"),
-    body("previousReading").isFloat({ min: 0 }).withMessage("Previous reading must be a positive number"),
+    body("currentReading")
+      .isFloat({ min: 0 })
+      .withMessage("Current reading must be a positive number"),
+    body("previousReading")
+      .isFloat({ min: 0 })
+      .withMessage("Previous reading must be a positive number"),
   ],
   validate,
   async (req, res) => {
@@ -37,10 +236,11 @@ router.post(
       if (meter.status !== "active")
         return res.status(400).json({ success: false, message: `Meter '${meterId}' is not active (status: ${meter.status})` });
 
+      // Current must be greater than previous
       if (currentReading < previousReading)
         return res.status(400).json({ success: false, message: "Current reading cannot be less than previous reading" });
 
-      // Check duplicate for same month
+      // Prevent duplicate reading for same month
       const date = readingDate ? new Date(readingDate) : new Date();
       const readingMonth = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 
@@ -81,8 +281,7 @@ router.post(
 );
 
 // ─────────────────────────────────────────────────────────────────
-// GET /api/readings
-// Called by: Admin / API Gateway
+// GET /api/readings — Get all readings
 // ─────────────────────────────────────────────────────────────────
 router.get("/", async (req, res) => {
   try {
@@ -97,7 +296,13 @@ router.get("/", async (req, res) => {
       .limit(Number(limit));
 
     const total = await MeterReading.countDocuments(filter);
-    res.status(200).json({ success: true, total, page: Number(page), pages: Math.ceil(total / limit), data: readings });
+    res.status(200).json({
+      success: true,
+      total,
+      page: Number(page),
+      pages: Math.ceil(total / limit),
+      data: readings,
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -105,8 +310,8 @@ router.get("/", async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────
 // GET /api/readings/meter/:meterId/latest
-// Called by: Bill Service — gets the latest reading before billing
-// IMPORTANT: this route must stay ABOVE /meter/:meterId
+// Called by: Bill Service — gets latest reading before billing
+// IMPORTANT: must stay ABOVE /meter/:meterId and /:id routes
 // ─────────────────────────────────────────────────────────────────
 router.get("/meter/:meterId/latest", async (req, res) => {
   try {
@@ -121,8 +326,8 @@ router.get("/meter/:meterId/latest", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────
-// GET /api/readings/meter/:meterId
-// Called by: Bill Service / Admin — get all readings for a meter
+// GET /api/readings/meter/:meterId — All readings for a meter
+// Called by: Bill Service / Admin
 // ─────────────────────────────────────────────────────────────────
 router.get("/meter/:meterId", async (req, res) => {
   try {
@@ -135,8 +340,8 @@ router.get("/meter/:meterId", async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────
 // GET /api/readings/customer/:customerId
-// Called by: Bill Service — gets readings for a customer to calculate bill
-// Key fields returned: unitsConsumed, readingMonth, status
+// Called by: Bill Service — gets unitsConsumed + readingMonth
+//            to calculate and generate the bill
 // ─────────────────────────────────────────────────────────────────
 router.get("/customer/:customerId", async (req, res) => {
   try {
@@ -152,8 +357,8 @@ router.get("/customer/:customerId", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────
-// GET /api/readings/:id
-// Called by: Bill Service — get one reading by its MongoDB _id
+// GET /api/readings/:id — Get reading by MongoDB _id
+// Called by: Bill Service to get one specific reading
 // ─────────────────────────────────────────────────────────────────
 router.get("/:id", async (req, res) => {
   try {
@@ -169,14 +374,16 @@ router.get("/:id", async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────
 // PUT /api/readings/:id/status
-// Called by: Bill Service — after generating a bill, it marks the
-//            reading status as "billed"
+// Called by: Bill Service — marks reading as "billed" after billing
+//            prevents the same reading from being billed twice
 // ─────────────────────────────────────────────────────────────────
 router.put(
   "/:id/status",
   [
     param("id").notEmpty(),
-    body("status").isIn(["pending", "billed", "disputed"]).withMessage("Invalid status value"),
+    body("status")
+      .isIn(["pending", "billed", "disputed"])
+      .withMessage("Invalid status value"),
   ],
   validate,
   async (req, res) => {
@@ -189,14 +396,20 @@ router.put(
       if (!reading)
         return res.status(404).json({ success: false, message: "Reading not found" });
 
-      res.status(200).json({ success: true, message: `Reading status updated to '${req.body.status}'`, data: reading });
+      res.status(200).json({
+        success: true,
+        message: `Reading status updated to '${req.body.status}'`,
+        data: reading,
+      });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
     }
   }
 );
 
-// DELETE /api/readings/:id
+// ─────────────────────────────────────────────────────────────────
+// DELETE /api/readings/:id — Delete a reading
+// ─────────────────────────────────────────────────────────────────
 router.delete("/:id", async (req, res) => {
   try {
     const reading = await MeterReading.findByIdAndDelete(req.params.id);

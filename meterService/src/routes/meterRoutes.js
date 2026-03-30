@@ -10,10 +10,174 @@ const validate = (req, res, next) => {
   next();
 };
 
+/**
+ * @swagger
+ * tags:
+ *   name: Meters
+ *   description: Meter management
+ *
+ * /api/meters:
+ *   post:
+ *     summary: Register a new meter
+ *     tags: [Meters]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [customerId, location]
+ *             properties:
+ *               meterId:
+ *                 type: string
+ *                 example: MTR-001
+ *               customerId:
+ *                 type: string
+ *                 example: CUST-001
+ *               meterType:
+ *                 type: string
+ *                 enum: [single-phase, three-phase, industrial]
+ *                 example: single-phase
+ *               location:
+ *                 type: object
+ *                 properties:
+ *                   address:
+ *                     type: string
+ *                     example: 123 Main Street
+ *                   city:
+ *                     type: string
+ *                     example: Colombo
+ *                   district:
+ *                     type: string
+ *                     example: Western
+ *     responses:
+ *       201:
+ *         description: Meter registered successfully
+ *       409:
+ *         description: Meter already exists
+ *
+ *   get:
+ *     summary: Get all meters
+ *     tags: [Meters]
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [active, inactive, faulty, replaced]
+ *         description: Filter by status
+ *       - in: query
+ *         name: meterType
+ *         schema:
+ *           type: string
+ *           enum: [single-phase, three-phase, industrial]
+ *         description: Filter by meter type
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           example: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           example: 10
+ *     responses:
+ *       200:
+ *         description: List of all meters
+ *
+ * /api/meters/customer/{customerId}:
+ *   get:
+ *     summary: Get all meters for a customer (used by Bill Service)
+ *     tags: [Meters]
+ *     parameters:
+ *       - in: path
+ *         name: customerId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: CUST-001
+ *     responses:
+ *       200:
+ *         description: Meters found for customer
+ *       500:
+ *         description: Server error
+ *
+ * /api/meters/{meterId}:
+ *   get:
+ *     summary: Get meter by meter ID
+ *     tags: [Meters]
+ *     parameters:
+ *       - in: path
+ *         name: meterId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: MTR-001
+ *     responses:
+ *       200:
+ *         description: Meter found
+ *       404:
+ *         description: Meter not found
+ *
+ *   put:
+ *     summary: Update meter details
+ *     tags: [Meters]
+ *     parameters:
+ *       - in: path
+ *         name: meterId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: MTR-001
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               status:
+ *                 type: string
+ *                 enum: [active, inactive, faulty, replaced]
+ *                 example: inactive
+ *               meterType:
+ *                 type: string
+ *                 enum: [single-phase, three-phase, industrial]
+ *               location:
+ *                 type: object
+ *                 properties:
+ *                   address:
+ *                     type: string
+ *                   city:
+ *                     type: string
+ *                   district:
+ *                     type: string
+ *     responses:
+ *       200:
+ *         description: Meter updated successfully
+ *       404:
+ *         description: Meter not found
+ *
+ *   delete:
+ *     summary: Delete a meter
+ *     tags: [Meters]
+ *     parameters:
+ *       - in: path
+ *         name: meterId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: MTR-001
+ *     responses:
+ *       200:
+ *         description: Meter deleted successfully
+ *       404:
+ *         description: Meter not found
+ */
+
 // ─────────────────────────────────────────────────────────────────
-// POST /api/meters
-// Called by: Customer Service (after registering a customer,
-//            it calls this to register their meter)
+// POST /api/meters — Register a new meter
+// Called by: Customer Service after registering a customer
 // ─────────────────────────────────────────────────────────────────
 router.post(
   "/",
@@ -47,7 +211,7 @@ router.post(
 );
 
 // ─────────────────────────────────────────────────────────────────
-// GET /api/meters
+// GET /api/meters — Get all meters
 // Called by: Admin / API Gateway
 // ─────────────────────────────────────────────────────────────────
 router.get("/", async (req, res) => {
@@ -63,7 +227,13 @@ router.get("/", async (req, res) => {
       .limit(Number(limit));
 
     const total = await Meter.countDocuments(filter);
-    res.status(200).json({ success: true, total, page: Number(page), pages: Math.ceil(total / limit), data: meters });
+    res.status(200).json({
+      success: true,
+      total,
+      page: Number(page),
+      pages: Math.ceil(total / limit),
+      data: meters,
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -71,8 +241,8 @@ router.get("/", async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────
 // GET /api/meters/customer/:customerId
-// Called by: Bill Service — to get the meter linked to a customer
-//            before generating a bill
+// Called by: Bill Service — to find which meter belongs to customer
+// IMPORTANT: must stay ABOVE /:meterId route
 // ─────────────────────────────────────────────────────────────────
 router.get("/customer/:customerId", async (req, res) => {
   try {
@@ -84,8 +254,8 @@ router.get("/customer/:customerId", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────
-// GET /api/meters/:meterId
-// Called by: Bill Service / Payment Service — to verify meter exists
+// GET /api/meters/:meterId — Get meter by meterId
+// Called by: Bill Service / Payment Service to verify meter exists
 // ─────────────────────────────────────────────────────────────────
 router.get("/:meterId", async (req, res) => {
   try {
@@ -100,8 +270,7 @@ router.get("/:meterId", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────
-// PUT /api/meters/:meterId
-// Called by: Internal admin or other services to update meter status
+// PUT /api/meters/:meterId — Update meter
 // ─────────────────────────────────────────────────────────────────
 router.put(
   "/:meterId",
@@ -115,7 +284,10 @@ router.put(
   validate,
   async (req, res) => {
     try {
-      const allowedUpdates = ["status", "meterType", "location", "lastReadingDate", "lastReadingValue", "totalUnitsConsumed"];
+      const allowedUpdates = [
+        "status", "meterType", "location",
+        "lastReadingDate", "lastReadingValue", "totalUnitsConsumed",
+      ];
       const updates = {};
       allowedUpdates.forEach((field) => {
         if (req.body[field] !== undefined) updates[field] = req.body[field];
@@ -136,7 +308,9 @@ router.put(
   }
 );
 
-// DELETE /api/meters/:meterId
+// ─────────────────────────────────────────────────────────────────
+// DELETE /api/meters/:meterId — Delete a meter
+// ─────────────────────────────────────────────────────────────────
 router.delete("/:meterId", async (req, res) => {
   try {
     const meter = await Meter.findOneAndDelete({ meterId: req.params.meterId });
