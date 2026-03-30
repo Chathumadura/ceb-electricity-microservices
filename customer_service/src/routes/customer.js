@@ -59,14 +59,19 @@ router.delete('/profile', protect, async (req, res) => {
 // GET by ID
 router.get('/:id', protect, async (req, res) => {
   try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(400).json({ message: 'Invalid ID' });
+    let customer;
+
+    if (mongoose.Types.ObjectId.isValid(req.params.id)) {
+      // Lookup by MongoDB _id
+      customer = await Customer.findById(req.params.id).select('-password');
+    } else {
+      // Lookup by customerId string e.g. "CUST-003"
+      customer = await Customer.findOne({ customerId: req.params.id }).select('-password');
     }
 
-    const customer = await Customer.findById(req.params.id).select('-password');
     if (!customer) return res.status(404).json({ message: 'Customer not found' });
-
     res.json(customer);
+
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
