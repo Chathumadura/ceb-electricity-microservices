@@ -27,17 +27,16 @@ const meterClient = () =>
 //       '/customers/:id'
 // ─────────────────────────────────────────────────────────────────────────────
 const getCustomerById = async (customerId, token) => {
-  try {
-    const response = await customerClient().get(`/api/customers/${customerId}`, {
+  if (!token) throw new Error("Missing auth token in Bill Service");
+
+  const response = await customerClient().get(
+    `/api/customers/${customerId}`,
+    {
       headers: { Authorization: `Bearer ${token}` },
-    });
-    return response.data;
-  } catch (error) {
-    const message =
-      error.response?.data?.message ||
-      `Customer Service unreachable: ${error.message}`;
-    throw new Error(message);
-  }
+    }
+  );
+
+  return response.data;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,20 +48,31 @@ const getCustomerById = async (customerId, token) => {
 //       '/api/meters/:customerId'
 // ─────────────────────────────────────────────────────────────────────────────
 const getMeterReadingByCustomerId = async (customerId, token) => {
-  try {
-    const response = await meterClient().get(
-      `/api/meters/customer/${customerId}/latest`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      }
-    );
-    return response.data;
-  } catch (error) {
-    const message =
-      error.response?.data?.message ||
-      `Meter Service unreachable: ${error.message}`;
-    throw new Error(message);
+  if (!token) throw new Error("Missing auth token in Bill Service");
+
+  const meterResponse = await meterClient().get(
+    `/api/readings/customer/${customerId}`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
+
+  const meters = meterResponse.data.data;
+
+  if (!meters || meters.length === 0) {
+    throw new Error(`No meter found for customer ${customerId}`);
   }
+
+  const meterId = meters[0].meterId;
+
+  const readingResponse = await meterClient().get(
+    `/api/readings/meter/${meterId}/latest`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
+
+  return readingResponse.data.data;
 };
 
 module.exports = { customerClient, meterClient, getCustomerById, getMeterReadingByCustomerId };
