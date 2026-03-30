@@ -1,18 +1,46 @@
+const jwt = require('jsonwebtoken');
+
 // ─────────────────────────────────────────────────────────────────
-// auth.js — Inter-service authentication middleware
+// protect middleware — Meter Service
 //
-// When Bill Service or Payment Service calls Meter Service,
-// they pass the header:  x-service-secret: <SERVICE_SECRET>
-// This middleware checks that header to allow internal calls.
+// This works with Customer Service JWT token.
+// Customer logs in via Customer Service → gets a token
+// That same token is sent to Meter Service in the header:
+//   Authorization: Bearer <token>
+// This middleware verifies that token using the same JWT_SECRET
 // ─────────────────────────────────────────────────────────────────
 
-const authMiddleware = (req, res, next) => {
-  const serviceSecret = req.headers["x-service-secret"];
-  if (serviceSecret && serviceSecret === process.env.SERVICE_SECRET) {
-    return next();
+const protect = async (req, res, next) => {
+  let token;
+
+  if (
+    req.headers.authorization &&
+    req.headers.authorization.startsWith('Bearer ')
+  ) {
+    try {
+      // Extract token from header
+      token = req.headers.authorization.split(' ')[1];
+
+      // Verify using same JWT_SECRET as Customer Service
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+      // Attach customer info to request
+      // decoded contains: { id, customerId, name, email, iat, exp }
+      req.customer = decoded;
+
+      next();
+    } catch (error) {
+      return res.status(401).json({
+        success: false,
+        message: 'Not authorized, invalid token',
+      });
+    }
+  } else {
+    return res.status(401).json({
+      success: false,
+      message: 'Not authorized, no token provided',
+    });
   }
-  // Allow all for now — add JWT from API Gateway in production
-  next();
 };
 
-module.exports = authMiddleware;
+module.exports = { protect };

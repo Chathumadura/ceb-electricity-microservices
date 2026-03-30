@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { body, param, validationResult } = require("express-validator");
 const Meter = require("../models/Meter");
+const { protect } = require("../middleware/auth"); // ← import protect
 
 const validate = (req, res, next) => {
   const errors = validationResult(req);
@@ -20,13 +21,15 @@ const validate = (req, res, next) => {
  *   post:
  *     summary: Register a new meter
  *     tags: [Meters]
+ *     security:
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
  *             type: object
- *             required: [customerId, location]
+ *             required: [customerId]
  *             properties:
  *               meterId:
  *                 type: string
@@ -53,25 +56,27 @@ const validate = (req, res, next) => {
  *     responses:
  *       201:
  *         description: Meter registered successfully
+ *       401:
+ *         description: Not authorized
  *       409:
  *         description: Meter already exists
  *
  *   get:
  *     summary: Get all meters
  *     tags: [Meters]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: query
  *         name: status
  *         schema:
  *           type: string
  *           enum: [active, inactive, faulty, replaced]
- *         description: Filter by status
  *       - in: query
  *         name: meterType
  *         schema:
  *           type: string
  *           enum: [single-phase, three-phase, industrial]
- *         description: Filter by meter type
  *       - in: query
  *         name: page
  *         schema:
@@ -85,11 +90,15 @@ const validate = (req, res, next) => {
  *     responses:
  *       200:
  *         description: List of all meters
+ *       401:
+ *         description: Not authorized
  *
  * /api/meters/customer/{customerId}:
  *   get:
- *     summary: Get all meters for a customer (used by Bill Service)
+ *     summary: Get all meters for a customer
  *     tags: [Meters]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: customerId
@@ -99,14 +108,16 @@ const validate = (req, res, next) => {
  *         example: CUST-001
  *     responses:
  *       200:
- *         description: Meters found for customer
- *       500:
- *         description: Server error
+ *         description: Meters found
+ *       401:
+ *         description: Not authorized
  *
  * /api/meters/{meterId}:
  *   get:
  *     summary: Get meter by meter ID
  *     tags: [Meters]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: meterId
@@ -117,12 +128,16 @@ const validate = (req, res, next) => {
  *     responses:
  *       200:
  *         description: Meter found
+ *       401:
+ *         description: Not authorized
  *       404:
  *         description: Meter not found
  *
  *   put:
  *     summary: Update meter details
  *     tags: [Meters]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: meterId
@@ -139,7 +154,6 @@ const validate = (req, res, next) => {
  *               status:
  *                 type: string
  *                 enum: [active, inactive, faulty, replaced]
- *                 example: inactive
  *               meterType:
  *                 type: string
  *                 enum: [single-phase, three-phase, industrial]
@@ -154,13 +168,17 @@ const validate = (req, res, next) => {
  *                     type: string
  *     responses:
  *       200:
- *         description: Meter updated successfully
+ *         description: Meter updated
+ *       401:
+ *         description: Not authorized
  *       404:
  *         description: Meter not found
  *
  *   delete:
  *     summary: Delete a meter
  *     tags: [Meters]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: meterId
@@ -170,22 +188,20 @@ const validate = (req, res, next) => {
  *         example: MTR-001
  *     responses:
  *       200:
- *         description: Meter deleted successfully
+ *         description: Meter deleted
+ *       401:
+ *         description: Not authorized
  *       404:
  *         description: Meter not found
  */
 
-// ─────────────────────────────────────────────────────────────────
-// POST /api/meters — Register a new meter
-// Called by: Customer Service after registering a customer
-// ─────────────────────────────────────────────────────────────────
+// POST /api/meters — protected
 router.post(
   "/",
+  protect, // ← checks JWT token first
   [
     body("meterId").notEmpty().withMessage("Meter ID is required"),
     body("customerId").notEmpty().withMessage("Customer ID is required"),
-    body("location.address").notEmpty().withMessage("Address is required"),
-    body("location.city").notEmpty().withMessage("City is required"),
     body("meterType")
       .optional()
       .isIn(["single-phase", "three-phase", "industrial"])
@@ -210,11 +226,8 @@ router.post(
   }
 );
 
-// ─────────────────────────────────────────────────────────────────
-// GET /api/meters — Get all meters
-// Called by: Admin / API Gateway
-// ─────────────────────────────────────────────────────────────────
-router.get("/", async (req, res) => {
+// GET /api/meters — protected
+router.get("/", protect, async (req, res) => {
   try {
     const { status, meterType, page = 1, limit = 10 } = req.query;
     const filter = {};
@@ -239,12 +252,9 @@ router.get("/", async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────
-// GET /api/meters/customer/:customerId
-// Called by: Bill Service — to find which meter belongs to customer
-// IMPORTANT: must stay ABOVE /:meterId route
-// ─────────────────────────────────────────────────────────────────
-router.get("/customer/:customerId", async (req, res) => {
+// GET /api/meters/customer/:customerId — protected
+// IMPORTANT: must stay ABOVE /:meterId
+router.get("/customer/:customerId", protect, async (req, res) => {
   try {
     const meters = await Meter.find({ customerId: req.params.customerId }).sort({ createdAt: -1 });
     res.status(200).json({ success: true, count: meters.length, data: meters });
@@ -253,11 +263,8 @@ router.get("/customer/:customerId", async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────
-// GET /api/meters/:meterId — Get meter by meterId
-// Called by: Bill Service / Payment Service to verify meter exists
-// ─────────────────────────────────────────────────────────────────
-router.get("/:meterId", async (req, res) => {
+// GET /api/meters/:meterId — protected
+router.get("/:meterId", protect, async (req, res) => {
   try {
     const meter = await Meter.findOne({ meterId: req.params.meterId });
     if (!meter)
@@ -269,11 +276,10 @@ router.get("/:meterId", async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────
-// PUT /api/meters/:meterId — Update meter
-// ─────────────────────────────────────────────────────────────────
+// PUT /api/meters/:meterId — protected
 router.put(
   "/:meterId",
+  protect,
   [
     param("meterId").notEmpty(),
     body("status")
@@ -308,10 +314,8 @@ router.put(
   }
 );
 
-// ─────────────────────────────────────────────────────────────────
-// DELETE /api/meters/:meterId — Delete a meter
-// ─────────────────────────────────────────────────────────────────
-router.delete("/:meterId", async (req, res) => {
+// DELETE /api/meters/:meterId — protected
+router.delete("/:meterId", protect, async (req, res) => {
   try {
     const meter = await Meter.findOneAndDelete({ meterId: req.params.meterId });
     if (!meter)

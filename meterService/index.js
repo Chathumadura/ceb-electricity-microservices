@@ -33,8 +33,20 @@ const swaggerOptions = {
         description: "Local Development Server",
       },
     ],
+    // ── This adds the Authorize button in Swagger UI ───────────────
+    // Paste your JWT token there to test protected routes
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: "http",
+          scheme: "bearer",
+          bearerFormat: "JWT",
+        },
+      },
+    },
+    security: [{ bearerAuth: [] }],
   },
-  apis: ["./src/routes/*.js"], // reads swagger comments from route files
+  apis: ["./src/routes/*.js"],
 };
 
 const swaggerSpec = swaggerJsdoc(swaggerOptions);
@@ -45,7 +57,6 @@ app.use("/api/meters", require("./src/routes/meterRoutes"));
 app.use("/api/readings", require("./src/routes/readingRoutes"));
 
 // ─── Health Check ─────────────────────────────────────────────────
-// Other services call this to verify Meter Service is alive
 app.get("/health", (req, res) => {
   res.status(200).json({
     status: "OK",

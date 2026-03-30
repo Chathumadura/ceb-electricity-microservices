@@ -40,3 +40,4 @@ app.use((err, req, res, next) => {
 // Server
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`Customer Service running on port ${PORT}`));
+console.log(`📄  Swagger UI:          http://localhost:${PORT}/api-docs`);
