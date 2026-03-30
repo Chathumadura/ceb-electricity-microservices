@@ -2,6 +2,11 @@ const express = require("express");
 const router = express.Router();
 const Payment = require("../models/Payment");
 const protect = require("../middleware/auth");
+const axios = require("axios");
+
+// Service URLs from .env
+const CUSTOMER_SERVICE_URL = process.env.CUSTOMER_SERVICE_URL || "http://localhost:3001";
+const BILL_SERVICE_URL = process.env.BILL_SERVICE_URL || "http://localhost:3003";
 
 /**
  * @swagger
@@ -167,7 +172,7 @@ router.get("/:id", protect(), async (req, res, next) => {
  *             type: object
  *             required: [billId, customerId, amountPaid, paymentMethod]
  *             properties:
- *               billId:        { type: string, example: "BILL-001" }
+ *               billId:        { type: string, example: "676f1a2b3c4d5e6f7a8b9c0d" }
  *               customerId:    { type: string, example: "CUST-001" }
  *               amountPaid:    { type: number, example: 1852.50 }
  *               paymentMethod: { type: string, example: "Online Banking" }
@@ -176,19 +181,85 @@ router.get("/:id", protect(), async (req, res, next) => {
  *         description: Payment successful
  *       400:
  *         description: Bad request
+ *       404:
+ *         description: Customer or Bill not found
  */
 router.post("/", protect(), async (req, res, next) => {
     try {
-        const { billId } = req.body;
+        const { billId, customerId, amountPaid } = req.body;
 
-        // Check duplicate payment
-        const existing = await Payment.findOne({ billId, status: "success" });
-        if (existing) {
-            return res.status(400).json({ success: false, message: "This bill has already been paid" });
+        // ── Step 1: Customer Service එකෙන් customer validate කරන්න ──
+        try {
+            const token = req.headers.authorization; // Bearer token forward කරනවා
+            await axios.get(
+                `${CUSTOMER_SERVICE_URL}/api/customers/${customerId}`,
+                { headers: { Authorization: token } }
+            );
+        } catch (err) {
+            return res.status(404).json({
+                success: false,
+                message: "Customer not found in Customer Service",
+            });
         }
 
+        // ── Step 2: Bill Service එකෙන් bill validate කරන්න ──
+        let billData;
+        try {
+            const token = req.headers.authorization;
+            const billRes = await axios.get(
+                `${BILL_SERVICE_URL}/api/bills/${billId}`,
+                { headers: { Authorization: token } }
+            );
+            billData = billRes.data.data;
+        } catch (err) {
+            return res.status(404).json({
+                success: false,
+                message: "Bill not found in Bill Service",
+            });
+        }
+
+        // ── Step 3: Bill already paid ද check කරන්න ──
+        if (billData.status === "paid") {
+            return res.status(400).json({
+                success: false,
+                message: "This bill has already been paid",
+            });
+        }
+
+        // ── Step 4: Amount match ද check කරන්න ──
+        if (amountPaid < billData.billAmount) {
+            return res.status(400).json({
+                success: false,
+                message: `Insufficient amount. Bill amount is LKR ${billData.billAmount}`,
+            });
+        }
+
+        // ── Step 5: Duplicate payment check ──
+        const existing = await Payment.findOne({ billId, status: "success" });
+        if (existing) {
+            return res.status(400).json({
+                success: false,
+                message: "This bill has already been paid",
+            });
+        }
+
+        // ── Step 6: Payment save කරන්න ──
         const payment = new Payment(req.body);
         await payment.save();
+
+        // ── Step 7: Bill Service එකේ status "paid" update කරන්න ──
+        try {
+            const token = req.headers.authorization;
+            await axios.patch(
+                `${BILL_SERVICE_URL}/api/bills/${billId}/status`,
+                { status: "paid" },
+                { headers: { Authorization: token } }
+            );
+        } catch (err) {
+            console.error("⚠️ Bill status update failed:", err.message);
+            // Payment save වෙලා — bill update fail වුණත් payment valid
+        }
+
         res.status(201).json({ success: true, data: payment });
     } catch (err) {
         next(err);
@@ -231,11 +302,9 @@ router.put("/:id", protect(), async (req, res, next) => {
             new: true,
             runValidators: true,
         });
-
         if (!payment) {
             return res.status(404).json({ success: false, message: "Payment not found" });
         }
-
         res.json({ success: true, data: payment });
     } catch (err) {
         next(err);
@@ -265,11 +334,9 @@ router.put("/:id", protect(), async (req, res, next) => {
 router.delete("/:id", protect(), async (req, res, next) => {
     try {
         const payment = await Payment.findByIdAndDelete(req.params.id);
-
         if (!payment) {
             return res.status(404).json({ success: false, message: "Payment not found" });
         }
-
         res.json({ success: true, message: "Payment deleted successfully" });
     } catch (err) {
         next(err);
