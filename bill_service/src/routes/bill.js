@@ -60,9 +60,6 @@ const {
  *         unitsConsumed:
  *           type: number
  *           example: 150
- *         ratePerUnit:
- *           type: number
- *           example: 30
  *         fixedCharge:
  *           type: number
  *           example: 500
@@ -120,9 +117,6 @@ const {
  *               billingMonth:
  *                 type: string
  *                 example: "2024-03"
- *               ratePerUnit:
- *                 type: number
- *                 example: 30
  *               fixedCharge:
  *                 type: number
  *                 example: 500
@@ -154,7 +148,8 @@ const {
  */
 router.post('/generate', auth(), async (req, res) => {
   try {
-    const { customerId, billingMonth, ratePerUnit, fixedCharge, dueDate } = req.body;
+    // ── CHANGE 1: removed ratePerUnit from destructuring ────────────────────
+    const { customerId, billingMonth, fixedCharge, dueDate } = req.body;
 
     // ── Step 1: Validate required fields ────────────────────────────────────
     if (!customerId || !billingMonth) {
@@ -192,10 +187,6 @@ router.post('/generate', auth(), async (req, res) => {
     }
 
     // ── Step 5: Flexible field mapping ───────────────────────────────────────
-    // Handles different field names your teammates might use.
-    // ⚠️  ADJUST field names here once you see their actual API response.
-    //
-    // Customer fields — tries multiple common names, falls back to empty string
     const customerName =
       customer.name ||
       customer.customerName ||
@@ -215,7 +206,6 @@ router.post('/generate', auth(), async (req, res) => {
       customer.location ||
       '';
 
-    // Meter fields — tries multiple common names
     const meterId =
       meter._id ||
       meter.meterId ||
@@ -270,8 +260,8 @@ router.post('/generate', auth(), async (req, res) => {
 
       // Billing config
       billingMonth,
-      ratePerUnit: ratePerUnit || 30,
-      fixedCharge:  fixedCharge  || 500,
+      // ── CHANGE 2: removed ratePerUnit — CEB slab handles it in model ──────
+      fixedCharge: fixedCharge || 500,
       dueDate: dueDate ? new Date(dueDate) : null,
       // unitsConsumed and totalAmount are auto-calculated in pre('save') hook
     });
