@@ -1,20 +1,16 @@
 const express = require("express");
-const router = express.Router();
+const axios = require("axios");
 const Payment = require("../models/Payment");
 const protect = require("../middleware/auth");
-const axios = require("axios");
 
-// Service URLs from .env
+const router = express.Router();
+
 const CUSTOMER_SERVICE_URL = process.env.CUSTOMER_SERVICE_URL || "http://localhost:3001";
 const BILL_SERVICE_URL = process.env.BILL_SERVICE_URL || "http://localhost:3003";
 
-/**
- * @swagger
- * tags:
- *   name: Payments
- *   description: CEB Payment Management
- */
-
+// ─────────────────────────────────────────────────────────────────
+// GET /api/payments/methods  — PUBLIC
+// ─────────────────────────────────────────────────────────────────
 /**
  * @swagger
  * /api/payments/methods:
@@ -23,15 +19,18 @@ const BILL_SERVICE_URL = process.env.BILL_SERVICE_URL || "http://localhost:3003"
  *     tags: [Payments]
  *     responses:
  *       200:
- *         description: List of payment methods
+ *         description: List of accepted payment methods
  */
 router.get("/methods", (req, res) => {
     res.json({
         success: true,
-        accepted_methods: ["Online Banking", "Cash", "Card", "eZ Cash", "mCash"],
+        methods: ["Online Banking", "Cash", "Card", "eZ Cash", "mCash"],
     });
 });
 
+// ─────────────────────────────────────────────────────────────────
+// GET /api/payments  — PROTECTED
+// ─────────────────────────────────────────────────────────────────
 /**
  * @swagger
  * /api/payments:
@@ -53,6 +52,177 @@ router.get("/", protect(), async (req, res, next) => {
     }
 });
 
+// ─────────────────────────────────────────────────────────────────
+// POST /api/payments  — PROTECTED (with cross-service validation)
+// ─────────────────────────────────────────────────────────────────
+/**
+ * @swagger
+ * /api/payments:
+ *   post:
+ *     summary: Make a bill payment (auto-fetches latest unpaid bill for customer)
+ *     tags: [Payments]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [amountPaid, paymentMethod]
+ *             properties:
+ *               amountPaid:
+ *                 type: number
+ *                 example: 1852.50
+ *               paymentMethod:
+ *                 type: string
+ *                 example: Online Banking
+ *     responses:
+ *       201:
+ *         description: Payment successful
+ *       400:
+ *         description: Bad request
+ *       401:
+ *         description: Unauthorized
+ */
+router.post("/", protect(), async (req, res, next) => {
+    try {
+        const { amountPaid, paymentMethod } = req.body;
+        const customerId = req.user.customerId;
+        const token = req.headers.authorization;
+
+        if (!amountPaid || !paymentMethod) {
+            return res.status(400).json({ success: false, message: "amountPaid and paymentMethod are required" });
+        }
+
+        const amount = Number(amountPaid);
+        if (!Number.isFinite(amount) || amount <= 0) {
+            return res.status(400).json({ success: false, message: "Invalid amount" });
+        }
+
+        // 1. Validate customer exists
+        try {
+            await axios.get(`${CUSTOMER_SERVICE_URL}/api/customers/${customerId}`, {
+                headers: { Authorization: token },
+            });
+        } catch {
+            return res.status(404).json({ success: false, message: "Customer not found" });
+        }
+
+        // 2. Auto-fetch latest unpaid bill
+        let bill;
+        let billId;
+        try {
+            const billsRes = await axios.get(`${BILL_SERVICE_URL}/api/bills/customer/${customerId}`, {
+                headers: { Authorization: token },
+            });
+            const bills = billsRes.data.data;
+
+            // Find first unpaid bill
+            bill = bills.find(b => b.status !== "paid");
+            if (!bill) {
+                return res.status(404).json({ success: false, message: "No unpaid bills found for customer" });
+            }
+            billId = bill._id;
+        } catch {
+            return res.status(404).json({ success: false, message: "Could not fetch customer bills" });
+        }
+
+        // 3. Validate and compute cumulative payment state
+        const billAmount = Number(bill.billAmount || 0);
+        const existingPayments = await Payment.find({ billId, status: { $in: ["partial", "success"] } });
+        const alreadyPaid = existingPayments.reduce(
+            (sum, p) => sum + Number(p.appliedToBill ?? p.amountPaid ?? 0),
+            0
+        );
+        const payableRemaining = Math.max(0, billAmount - alreadyPaid);
+
+        if (payableRemaining <= 0) {
+            return res.status(400).json({ success: false, message: "Bill already fully paid" });
+        }
+
+        const appliedToBill = Math.min(amount, payableRemaining);
+        const creditAdded = Number((amount - appliedToBill).toFixed(2));
+        const totalPaid = alreadyPaid + appliedToBill;
+        const remainingAmount = Math.max(0, Number((billAmount - totalPaid).toFixed(2)));
+        const isPartial = remainingAmount > 0;
+        const paymentStatus = isPartial ? "partial" : "success";
+        const billStatus = isPartial ? "partial" : "paid";
+
+        if (creditAdded > 0) {
+            try {
+                await axios.patch(
+                    `${CUSTOMER_SERVICE_URL}/api/customers/${customerId}/credit`,
+                    { delta: creditAdded },
+                    { headers: { Authorization: token } }
+                );
+            } catch {
+                return res.status(502).json({
+                    success: false,
+                    message: "Payment received but credit update failed. Please retry.",
+                });
+            }
+        }
+
+        // 4. Generate transaction reference
+        const transactionRef = `TXN-${new Date().getFullYear()}-${String(Date.now()).slice(-4).padStart(4, '0')}`;
+
+        // 5. Save payment
+        const payment = await Payment.create({
+            billId,
+            customerId,
+            amountPaid: amount,
+            paymentMethod,
+            transactionRef,
+            status: paymentStatus,
+            appliedToBill,
+            creditAdded,
+            remainingAmount,
+            isPartial,
+            billStatus,
+        });
+
+        // 6. Update bill status
+        try {
+            await axios.patch(
+                `${BILL_SERVICE_URL}/api/bills/${billId}/status`,
+                { status: billStatus },
+                { headers: { Authorization: token } }
+            );
+        } catch {
+            // Non-critical — payment saved, bill update failed
+            console.warn("Could not update bill status");
+        }
+
+        const response = {
+            success: true,
+            transactionRef,
+            amountPaid: amount,
+            totalBillAmount: billAmount,
+            payableAmount: Number(payableRemaining.toFixed(2)),
+            appliedToBill,
+            remainingAmount,
+            billStatus,
+            message: isPartial
+                ? `Partial payment successful. Remaining: Rs. ${remainingAmount}`
+                : "Payment successful",
+            data: payment,
+        };
+
+        if (creditAdded > 0) {
+            response.creditAdded = creditAdded;
+            response.message = `Rs. ${creditAdded} credit saved for next bill`;
+        }
+
+        res.status(201).json(response);
+    } catch (err) {
+        next(err);
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────
+// GET /api/payments/summary/:customerId  — PROTECTED
+// ─────────────────────────────────────────────────────────────────
 /**
  * @swagger
  * /api/payments/summary/{customerId}:
@@ -79,19 +249,16 @@ router.get("/summary/:customerId", protect(), async (req, res, next) => {
         if (!payments.length) {
             return res.status(404).json({ success: false, message: "No payments found for this customer" });
         }
-        const total = payments.reduce((sum, p) => sum + p.amountPaid, 0);
-        res.json({
-            success: true,
-            customerId: req.params.customerId,
-            totalPayments: payments.length,
-            totalAmountPaidLKR: Math.round(total * 100) / 100,
-            paymentHistory: payments,
-        });
+        const totalPaid = payments.reduce((sum, p) => sum + p.amountPaid, 0);
+        res.json({ success: true, customerId: req.params.customerId, totalPaid, count: payments.length, payments });
     } catch (err) {
         next(err);
     }
 });
 
+// ─────────────────────────────────────────────────────────────────
+// GET /api/payments/customer/:customerId  — PROTECTED
+// ─────────────────────────────────────────────────────────────────
 /**
  * @swagger
  * /api/payments/customer/{customerId}:
@@ -114,7 +281,7 @@ router.get("/summary/:customerId", protect(), async (req, res, next) => {
  */
 router.get("/customer/:customerId", protect(), async (req, res, next) => {
     try {
-        const payments = await Payment.find({ customerId: req.params.customerId });
+        const payments = await Payment.find({ customerId: req.params.customerId }).sort({ createdAt: -1 });
         if (!payments.length) {
             return res.status(404).json({ success: false, message: "No payments found for this customer" });
         }
@@ -124,6 +291,9 @@ router.get("/customer/:customerId", protect(), async (req, res, next) => {
     }
 });
 
+// ─────────────────────────────────────────────────────────────────
+// GET /api/payments/:id  — PROTECTED
+// ─────────────────────────────────────────────────────────────────
 /**
  * @swagger
  * /api/payments/{id}:
@@ -147,125 +317,16 @@ router.get("/customer/:customerId", protect(), async (req, res, next) => {
 router.get("/:id", protect(), async (req, res, next) => {
     try {
         const payment = await Payment.findById(req.params.id);
-        if (!payment) {
-            return res.status(404).json({ success: false, message: "Payment not found" });
-        }
+        if (!payment) return res.status(404).json({ success: false, message: "Payment not found" });
         res.json({ success: true, data: payment });
     } catch (err) {
         next(err);
     }
 });
 
-/**
- * @swagger
- * /api/payments:
- *   post:
- *     summary: Make a bill payment
- *     tags: [Payments]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [billId, customerId, amountPaid, paymentMethod]
- *             properties:
- *               billId:        { type: string, example: "676f1a2b3c4d5e6f7a8b9c0d" }
- *               customerId:    { type: string, example: "CUST-001" }
- *               amountPaid:    { type: number, example: 1852.50 }
- *               paymentMethod: { type: string, example: "Online Banking" }
- *     responses:
- *       201:
- *         description: Payment successful
- *       400:
- *         description: Bad request
- *       404:
- *         description: Customer or Bill not found
- */
-router.post("/", protect(), async (req, res, next) => {
-    try {
-        const { billId, customerId, amountPaid } = req.body;
-
-        // ── Step 1: Customer Service එකෙන් customer validate කරන්න ──
-        try {
-            const token = req.headers.authorization; // Bearer token forward කරනවා
-            await axios.get(
-                `${CUSTOMER_SERVICE_URL}/api/customers/${customerId}`,
-                { headers: { Authorization: token } }
-            );
-        } catch (err) {
-            return res.status(404).json({
-                success: false,
-                message: "Customer not found in Customer Service",
-            });
-        }
-
-        // ── Step 2: Bill Service එකෙන් bill validate කරන්න ──
-        let billData;
-        try {
-            const token = req.headers.authorization;
-            const billRes = await axios.get(
-                `${BILL_SERVICE_URL}/api/bills/${billId}`,
-                { headers: { Authorization: token } }
-            );
-            billData = billRes.data.data;
-        } catch (err) {
-            return res.status(404).json({
-                success: false,
-                message: "Bill not found in Bill Service",
-            });
-        }
-
-        // ── Step 3: Bill already paid ද check කරන්න ──
-        if (billData.status === "paid") {
-            return res.status(400).json({
-                success: false,
-                message: "This bill has already been paid",
-            });
-        }
-
-        // ── Step 4: Amount match ද check කරන්න ──
-        if (amountPaid < billData.billAmount) {
-            return res.status(400).json({
-                success: false,
-                message: `Insufficient amount. Bill amount is LKR ${billData.billAmount}`,
-            });
-        }
-
-        // ── Step 5: Duplicate payment check ──
-        const existing = await Payment.findOne({ billId, status: "success" });
-        if (existing) {
-            return res.status(400).json({
-                success: false,
-                message: "This bill has already been paid",
-            });
-        }
-
-        // ── Step 6: Payment save කරන්න ──
-        const payment = new Payment(req.body);
-        await payment.save();
-
-        // ── Step 7: Bill Service එකේ status "paid" update කරන්න ──
-        try {
-            const token = req.headers.authorization;
-            await axios.patch(
-                `${BILL_SERVICE_URL}/api/bills/${billId}/status`,
-                { status: "paid" },
-                { headers: { Authorization: token } }
-            );
-        } catch (err) {
-            console.error("⚠️ Bill status update failed:", err.message);
-            // Payment save වෙලා — bill update fail වුණත් payment valid
-        }
-
-        res.status(201).json({ success: true, data: payment });
-    } catch (err) {
-        next(err);
-    }
-});
-
+// ─────────────────────────────────────────────────────────────────
+// PUT /api/payments/:id  — PROTECTED
+// ─────────────────────────────────────────────────────────────────
 /**
  * @swagger
  * /api/payments/{id}:
@@ -286,31 +347,25 @@ router.post("/", protect(), async (req, res, next) => {
  *         application/json:
  *           schema:
  *             type: object
- *             properties:
- *               amountPaid:    { type: number, example: 2000 }
- *               paymentMethod: { type: string, example: "Card" }
- *               status:        { type: string, example: "success" }
  *     responses:
  *       200:
- *         description: Payment updated successfully
+ *         description: Payment updated
  *       404:
  *         description: Payment not found
  */
 router.put("/:id", protect(), async (req, res, next) => {
     try {
-        const payment = await Payment.findByIdAndUpdate(req.params.id, req.body, {
-            new: true,
-            runValidators: true,
-        });
-        if (!payment) {
-            return res.status(404).json({ success: false, message: "Payment not found" });
-        }
+        const payment = await Payment.findByIdAndUpdate(req.params.id, req.body, { new: true });
+        if (!payment) return res.status(404).json({ success: false, message: "Payment not found" });
         res.json({ success: true, data: payment });
     } catch (err) {
         next(err);
     }
 });
 
+// ─────────────────────────────────────────────────────────────────
+// DELETE /api/payments/:id  — PROTECTED
+// ─────────────────────────────────────────────────────────────────
 /**
  * @swagger
  * /api/payments/{id}:
@@ -327,17 +382,15 @@ router.put("/:id", protect(), async (req, res, next) => {
  *           type: string
  *     responses:
  *       200:
- *         description: Payment deleted successfully
+ *         description: Payment deleted
  *       404:
  *         description: Payment not found
  */
 router.delete("/:id", protect(), async (req, res, next) => {
     try {
         const payment = await Payment.findByIdAndDelete(req.params.id);
-        if (!payment) {
-            return res.status(404).json({ success: false, message: "Payment not found" });
-        }
-        res.json({ success: true, message: "Payment deleted successfully" });
+        if (!payment) return res.status(404).json({ success: false, message: "Payment not found" });
+        res.json({ success: true, message: "Payment deleted" });
     } catch (err) {
         next(err);
     }

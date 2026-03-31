@@ -5,9 +5,9 @@ const swaggerJsdoc = require("swagger-jsdoc");
 const path = require("node:path");
 require("dotenv").config();
 
-const connectDB = require("./config/db");
-const paymentRoutes = require("./routes/paymentRoutes");
-const errorHandler = require("./middleware/errorHandler");
+const connectDB = require("./src/config/db");
+const paymentRoutes = require("./src/routes/paymentRoutes");
+const errorHandler = require("./src/middleware/errorHandler");
 
 const app = express();
 

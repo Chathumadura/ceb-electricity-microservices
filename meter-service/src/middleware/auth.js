@@ -10,7 +10,7 @@ const jwt = require('jsonwebtoken');
 // This middleware verifies that token using the same JWT_SECRET
 // ─────────────────────────────────────────────────────────────────
 
-const protect = async (req, res, next) => {
+const protect = (roles = []) => (req, res, next) => {
   let token;
 
   if (
@@ -23,6 +23,14 @@ const protect = async (req, res, next) => {
 
       // Verify using same JWT_SECRET as Customer Service
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+      // Check roles if specified
+      if (roles.length && !roles.includes(decoded.role)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized, insufficient permissions',
+        });
+      }
 
       // Attach customer info to request
       // decoded contains: { id, customerId, name, email, iat, exp }
@@ -43,4 +51,4 @@ const protect = async (req, res, next) => {
   }
 };
 
-module.exports = { protect };
+module.exports = protect;

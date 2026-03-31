@@ -5,8 +5,8 @@ const swaggerJsdoc = require("swagger-jsdoc");
 const path = require("node:path");
 require("dotenv").config();
 
-const connectDB = require("./src/config/db");
-const meterRoutes = require("./src/routes/meterRoutes");
+const connectDB = require("./config/db");
+const billRoutes = require("./routes/billRoutes");
 
 const app = express();
 app.use(express.json());
@@ -15,24 +15,24 @@ app.use(cors());
 const swaggerOptions = {
   definition: {
     openapi: "3.0.0",
-    info: { title: "Meter Service API", version: "1.0.0", description: "CEB Meter Management - IT4020 Assignment 2" },
-    servers: [{ url: "http://localhost:3002" }],
+    info: { title: "Bill Service API", version: "1.0.0", description: "CEB Bill Management - IT4020 Assignment 2" },
+    servers: [{ url: "http://localhost:3003" }],
     components: {
       securitySchemes: {
         bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" },
       },
     },
   },
-  apis: [path.join(__dirname, "src", "routes", "*.js")],
+  apis: [path.join(__dirname, "routes", "*.js")],
 };
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerJsdoc(swaggerOptions)));
-app.get("/health", (req, res) => res.json({ status: "healthy", service: "meter-service", port: 3002 }));
-app.use("/api/meters", meterRoutes);
+app.get("/health", (req, res) => res.json({ status: "healthy", service: "bill-service", port: 3003 }));
+app.use("/api/bills", billRoutes);
 
-const PORT = process.env.PORT || 3002;
+const PORT = process.env.PORT || 3003;
 connectDB().then(() => {
   app.listen(PORT, () => {
-    console.log(`🚀 Meter Service running on port ${PORT}`);
+    console.log(`🚀 Bill Service running on port ${PORT}`);
     console.log(`📖 Swagger: http://localhost:${PORT}/api-docs`);
   });
 });
