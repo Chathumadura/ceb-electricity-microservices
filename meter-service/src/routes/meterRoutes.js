@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { body, param, validationResult } = require("express-validator");
 const Meter = require("../models/Meter");
-const { protect } = require("../middleware/auth"); // ← import protect
+const { protect } = require("../middleware/auth");
 
 const validate = (req, res, next) => {
   const errors = validationResult(req);
@@ -19,7 +19,7 @@ const validate = (req, res, next) => {
  *
  * /api/meters:
  *   post:
- *     summary: Register a new meter
+ *     summary: Register a new meter (customerId taken from token automatically)
  *     tags: [Meters]
  *     security:
  *       - bearerAuth: []
@@ -29,14 +29,10 @@ const validate = (req, res, next) => {
  *         application/json:
  *           schema:
  *             type: object
- *             required: [customerId]
  *             properties:
  *               meterId:
  *                 type: string
  *                 example: MTR-001
- *               customerId:
- *                 type: string
- *                 example: CUST-001
  *               meterType:
  *                 type: string
  *                 enum: [single-phase, three-phase, industrial]
@@ -62,7 +58,7 @@ const validate = (req, res, next) => {
  *         description: Meter already exists
  *
  *   get:
- *     summary: Get all meters
+ *     summary: Get all meters for the logged in customer
  *     tags: [Meters]
  *     security:
  *       - bearerAuth: []
@@ -89,26 +85,7 @@ const validate = (req, res, next) => {
  *           example: 10
  *     responses:
  *       200:
- *         description: List of all meters
- *       401:
- *         description: Not authorized
- *
- * /api/meters/customer/{customerId}:
- *   get:
- *     summary: Get all meters for a customer
- *     tags: [Meters]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: customerId
- *         required: true
- *         schema:
- *           type: string
- *         example: CUST-001
- *     responses:
- *       200:
- *         description: Meters found
+ *         description: List of meters
  *       401:
  *         description: Not authorized
  *
@@ -195,13 +172,16 @@ const validate = (req, res, next) => {
  *         description: Meter not found
  */
 
-// POST /api/meters — protected
+// ─────────────────────────────────────────────────────────────────
+// POST /api/meters — Register a new meter
+// customerId is NOT in request body
+// it is taken automatically from the JWT token (req.customer.customerId)
+// ─────────────────────────────────────────────────────────────────
 router.post(
   "/",
-  protect, // ← checks JWT token first
+  protect,
   [
     body("meterId").notEmpty().withMessage("Meter ID is required"),
-    body("customerId").notEmpty().withMessage("Customer ID is required"),
     body("meterType")
       .optional()
       .isIn(["single-phase", "three-phase", "industrial"])
@@ -210,7 +190,10 @@ router.post(
   validate,
   async (req, res) => {
     try {
-      const { meterId, customerId, meterType, location, installedDate } = req.body;
+      const { meterId, meterType, location, installedDate } = req.body;
+
+      // ── Get customerId from JWT token — not from request body ───
+      const customerId = req.customer.customerId;
 
       const existing = await Meter.findOne({ meterId });
       if (existing)
@@ -226,11 +209,16 @@ router.post(
   }
 );
 
-// GET /api/meters — protected
+// ─────────────────────────────────────────────────────────────────
+// GET /api/meters — Get all meters for the logged in customer
+// Only shows meters belonging to the logged in customer
+// ─────────────────────────────────────────────────────────────────
 router.get("/", protect, async (req, res) => {
   try {
     const { status, meterType, page = 1, limit = 10 } = req.query;
-    const filter = {};
+
+    // ── Filter by customerId from token ─────────────────────────
+    const filter = { customerId: req.customer.customerId };
     if (status) filter.status = status;
     if (meterType) filter.meterType = meterType;
 
@@ -252,21 +240,16 @@ router.get("/", protect, async (req, res) => {
   }
 });
 
-// GET /api/meters/customer/:customerId — protected
-// IMPORTANT: must stay ABOVE /:meterId
-router.get("/customer/:customerId", protect, async (req, res) => {
-  try {
-    const meters = await Meter.find({ customerId: req.params.customerId }).sort({ createdAt: -1 });
-    res.status(200).json({ success: true, count: meters.length, data: meters });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// GET /api/meters/:meterId — protected
+// ─────────────────────────────────────────────────────────────────
+// GET /api/meters/:meterId — Get one meter
+// Only returns if it belongs to the logged in customer
+// ─────────────────────────────────────────────────────────────────
 router.get("/:meterId", protect, async (req, res) => {
   try {
-    const meter = await Meter.findOne({ meterId: req.params.meterId });
+    const meter = await Meter.findOne({
+      meterId: req.params.meterId,
+      customerId: req.customer.customerId, // ← security check
+    });
     if (!meter)
       return res.status(404).json({ success: false, message: `Meter '${req.params.meterId}' not found` });
 
@@ -276,7 +259,10 @@ router.get("/:meterId", protect, async (req, res) => {
   }
 });
 
-// PUT /api/meters/:meterId — protected
+// ─────────────────────────────────────────────────────────────────
+// PUT /api/meters/:meterId — Update meter
+// Only updates if meter belongs to logged in customer
+// ─────────────────────────────────────────────────────────────────
 router.put(
   "/:meterId",
   protect,
@@ -300,7 +286,10 @@ router.put(
       });
 
       const meter = await Meter.findOneAndUpdate(
-        { meterId: req.params.meterId },
+        {
+          meterId: req.params.meterId,
+          customerId: req.customer.customerId, // ← security check
+        },
         updates,
         { new: true, runValidators: true }
       );
@@ -314,10 +303,16 @@ router.put(
   }
 );
 
-// DELETE /api/meters/:meterId — protected
+// ─────────────────────────────────────────────────────────────────
+// DELETE /api/meters/:meterId — Delete meter
+// Only deletes if meter belongs to logged in customer
+// ─────────────────────────────────────────────────────────────────
 router.delete("/:meterId", protect, async (req, res) => {
   try {
-    const meter = await Meter.findOneAndDelete({ meterId: req.params.meterId });
+    const meter = await Meter.findOneAndDelete({
+      meterId: req.params.meterId,
+      customerId: req.customer.customerId, // ← security check
+    });
     if (!meter)
       return res.status(404).json({ success: false, message: `Meter '${req.params.meterId}' not found` });
 

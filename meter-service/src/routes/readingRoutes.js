@@ -3,7 +3,7 @@ const router = express.Router();
 const { body, param, validationResult } = require("express-validator");
 const MeterReading = require("../models/MeterReading");
 const Meter = require("../models/Meter");
-const { protect } = require("../middleware/auth"); // ← import protect
+const { protect } = require("../middleware/auth");
 
 const validate = (req, res, next) => {
   const errors = validationResult(req);
@@ -20,7 +20,7 @@ const validate = (req, res, next) => {
  *
  * /api/readings:
  *   post:
- *     summary: Submit a new meter reading
+ *     summary: Submit a new meter reading (customerId taken from token)
  *     tags: [Readings]
  *     security:
  *       - bearerAuth: []
@@ -30,14 +30,11 @@ const validate = (req, res, next) => {
  *         application/json:
  *           schema:
  *             type: object
- *             required: [meterId, customerId, previousReading, currentReading]
+ *             required: [meterId, previousReading, currentReading]
  *             properties:
  *               meterId:
  *                 type: string
  *                 example: MTR-001
- *               customerId:
- *                 type: string
- *                 example: CUST-001
  *               previousReading:
  *                 type: number
  *                 example: 100
@@ -65,7 +62,7 @@ const validate = (req, res, next) => {
  *         description: Reading already exists for this month
  *
  *   get:
- *     summary: Get all readings
+ *     summary: Get all readings for the logged in customer
  *     tags: [Readings]
  *     security:
  *       - bearerAuth: []
@@ -119,7 +116,7 @@ const validate = (req, res, next) => {
  *
  * /api/readings/meter/{meterId}:
  *   get:
- *     summary: Get all readings for a meter
+ *     summary: Get all readings for a specific meter
  *     tags: [Readings]
  *     security:
  *       - bearerAuth: []
@@ -130,30 +127,6 @@ const validate = (req, res, next) => {
  *         schema:
  *           type: string
  *         example: MTR-001
- *     responses:
- *       200:
- *         description: Readings found
- *       401:
- *         description: Not authorized
- *
- * /api/readings/customer/{customerId}:
- *   get:
- *     summary: Get readings by customer ID
- *     tags: [Readings]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: customerId
- *         required: true
- *         schema:
- *           type: string
- *         example: CUST-001
- *       - in: query
- *         name: readingMonth
- *         schema:
- *           type: string
- *           example: "2025-03"
  *     responses:
  *       200:
  *         description: Readings found
@@ -235,24 +208,32 @@ const validate = (req, res, next) => {
  *         description: Reading not found
  */
 
-// POST /api/readings — protected
+// ─────────────────────────────────────────────────────────────────
+// POST /api/readings — Submit a new meter reading
+// customerId is NOT in request body
+// it is taken automatically from the JWT token (req.customer.customerId)
+// ─────────────────────────────────────────────────────────────────
 router.post(
   "/",
   protect,
   [
     body("meterId").notEmpty().withMessage("Meter ID is required"),
-    body("customerId").notEmpty().withMessage("Customer ID is required"),
+    // customerId removed — comes from token
     body("currentReading").isFloat({ min: 0 }).withMessage("Current reading must be a positive number"),
     body("previousReading").isFloat({ min: 0 }).withMessage("Previous reading must be a positive number"),
   ],
   validate,
   async (req, res) => {
     try {
-      const { meterId, customerId, currentReading, previousReading, readBy, notes, readingDate } = req.body;
+      const { meterId, currentReading, previousReading, readBy, notes, readingDate } = req.body;
 
-      const meter = await Meter.findOne({ meterId });
+      // ── Get customerId from JWT token — not from request body ───
+      const customerId = req.customer.customerId;
+
+      // Verify meter exists, is active, AND belongs to this customer
+      const meter = await Meter.findOne({ meterId, customerId });
       if (!meter)
-        return res.status(404).json({ success: false, message: `Meter '${meterId}' not found` });
+        return res.status(404).json({ success: false, message: `Meter '${meterId}' not found for your account` });
       if (meter.status !== "active")
         return res.status(400).json({ success: false, message: `Meter '${meterId}' is not active (status: ${meter.status})` });
 
@@ -269,8 +250,11 @@ router.post(
       const unitsConsumed = currentReading - previousReading;
 
       const reading = new MeterReading({
-        meterId, customerId, previousReading,
-        currentReading, unitsConsumed,
+        meterId,
+        customerId,   // ← from token, not body
+        previousReading,
+        currentReading,
+        unitsConsumed,
         readingDate: date,
         readBy: readBy || "field-officer",
         notes,
@@ -280,7 +264,11 @@ router.post(
 
       await Meter.findOneAndUpdate(
         { meterId },
-        { lastReadingDate: date, lastReadingValue: currentReading, $inc: { totalUnitsConsumed: unitsConsumed } }
+        {
+          lastReadingDate: date,
+          lastReadingValue: currentReading,
+          $inc: { totalUnitsConsumed: unitsConsumed },
+        }
       );
 
       res.status(201).json({ success: true, message: "Meter reading submitted successfully", data: reading });
@@ -290,11 +278,15 @@ router.post(
   }
 );
 
-// GET /api/readings — protected
+// ─────────────────────────────────────────────────────────────────
+// GET /api/readings — Get all readings for the logged in customer
+// ─────────────────────────────────────────────────────────────────
 router.get("/", protect, async (req, res) => {
   try {
     const { status, readingMonth, page = 1, limit = 10 } = req.query;
-    const filter = {};
+
+    // ── Filter by customerId from token ─────────────────────────
+    const filter = { customerId: req.customer.customerId };
     if (status) filter.status = status;
     if (readingMonth) filter.readingMonth = readingMonth;
 
@@ -304,17 +296,29 @@ router.get("/", protect, async (req, res) => {
       .limit(Number(limit));
 
     const total = await MeterReading.countDocuments(filter);
-    res.status(200).json({ success: true, total, page: Number(page), pages: Math.ceil(total / limit), data: readings });
+    res.status(200).json({
+      success: true,
+      total,
+      page: Number(page),
+      pages: Math.ceil(total / limit),
+      data: readings,
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// GET /api/readings/meter/:meterId/latest — protected
+// ─────────────────────────────────────────────────────────────────
+// GET /api/readings/meter/:meterId/latest
 // IMPORTANT: must stay ABOVE /meter/:meterId and /:id
+// ─────────────────────────────────────────────────────────────────
 router.get("/meter/:meterId/latest", protect, async (req, res) => {
   try {
-    const reading = await MeterReading.findOne({ meterId: req.params.meterId }).sort({ readingDate: -1 });
+    const reading = await MeterReading.findOne({
+      meterId: req.params.meterId,
+      customerId: req.customer.customerId, // ← security check
+    }).sort({ readingDate: -1 });
+
     if (!reading)
       return res.status(404).json({ success: false, message: `No readings found for meter '${req.params.meterId}'` });
 
@@ -324,34 +328,33 @@ router.get("/meter/:meterId/latest", protect, async (req, res) => {
   }
 });
 
-// GET /api/readings/meter/:meterId — protected
+// ─────────────────────────────────────────────────────────────────
+// GET /api/readings/meter/:meterId
+// Only returns readings that belong to the logged in customer
+// ─────────────────────────────────────────────────────────────────
 router.get("/meter/:meterId", protect, async (req, res) => {
   try {
-    const readings = await MeterReading.find({ meterId: req.params.meterId }).sort({ readingDate: -1 });
+    const readings = await MeterReading.find({
+      meterId: req.params.meterId,
+      customerId: req.customer.customerId, // ← security check
+    }).sort({ readingDate: -1 });
+
     res.status(200).json({ success: true, count: readings.length, data: readings });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// GET /api/readings/customer/:customerId — protected
-router.get("/customer/:customerId", protect, async (req, res) => {
-  try {
-    const { readingMonth } = req.query;
-    const filter = { customerId: req.params.customerId };
-    if (readingMonth) filter.readingMonth = readingMonth;
-
-    const readings = await MeterReading.find(filter).sort({ readingDate: -1 });
-    res.status(200).json({ success: true, count: readings.length, data: readings });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// GET /api/readings/:id — protected
+// ─────────────────────────────────────────────────────────────────
+// GET /api/readings/:id
+// Only returns if reading belongs to the logged in customer
+// ─────────────────────────────────────────────────────────────────
 router.get("/:id", protect, async (req, res) => {
   try {
-    const reading = await MeterReading.findById(req.params.id);
+    const reading = await MeterReading.findOne({
+      _id: req.params.id,
+      customerId: req.customer.customerId, // ← security check
+    });
     if (!reading)
       return res.status(404).json({ success: false, message: "Reading not found" });
 
@@ -361,7 +364,10 @@ router.get("/:id", protect, async (req, res) => {
   }
 });
 
-// PUT /api/readings/:id/status — protected
+// ─────────────────────────────────────────────────────────────────
+// PUT /api/readings/:id/status
+// Called by Bill Service after generating a bill
+// ─────────────────────────────────────────────────────────────────
 router.put(
   "/:id/status",
   protect,
@@ -380,17 +386,27 @@ router.put(
       if (!reading)
         return res.status(404).json({ success: false, message: "Reading not found" });
 
-      res.status(200).json({ success: true, message: `Reading status updated to '${req.body.status}'`, data: reading });
+      res.status(200).json({
+        success: true,
+        message: `Reading status updated to '${req.body.status}'`,
+        data: reading,
+      });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
     }
   }
 );
 
-// DELETE /api/readings/:id — protected
+// ─────────────────────────────────────────────────────────────────
+// DELETE /api/readings/:id
+// Only deletes if reading belongs to logged in customer
+// ─────────────────────────────────────────────────────────────────
 router.delete("/:id", protect, async (req, res) => {
   try {
-    const reading = await MeterReading.findByIdAndDelete(req.params.id);
+    const reading = await MeterReading.findOneAndDelete({
+      _id: req.params.id,
+      customerId: req.customer.customerId, // ← security check
+    });
     if (!reading)
       return res.status(404).json({ success: false, message: "Reading not found" });
 
