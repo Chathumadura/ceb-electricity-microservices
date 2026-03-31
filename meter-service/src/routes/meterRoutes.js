@@ -305,16 +305,30 @@ router.put(
 
 // ─────────────────────────────────────────────────────────────────
 // DELETE /api/meters/:meterId — Delete meter
-// Only deletes if meter belongs to logged in customer
+// Step 1: Find the meter — if not found, return 404
+// Step 2: Check if it belongs to the logged in customer — if not, return 403
+// Step 3: Delete it
 // ─────────────────────────────────────────────────────────────────
 router.delete("/:meterId", protect, async (req, res) => {
   try {
-    const meter = await Meter.findOneAndDelete({
-      meterId: req.params.meterId,
-      customerId: req.customer.customerId, // ← security check
-    });
+    // Step 1 — find the meter first
+    const meter = await Meter.findOne({ meterId: req.params.meterId });
+
     if (!meter)
-      return res.status(404).json({ success: false, message: `Meter '${req.params.meterId}' not found` });
+      return res.status(404).json({
+        success: false,
+        message: `Meter '${req.params.meterId}' not found`,
+      });
+
+    // Step 2 — check ownership using token customerId
+    if (meter.customerId !== req.customer.customerId)
+      return res.status(403).json({
+        success: false,
+        message: "Not allowed — you can only delete your own meters",
+      });
+
+    // Step 3 — safe to delete
+    await Meter.findOneAndDelete({ meterId: req.params.meterId });
 
     res.status(200).json({ success: true, message: "Meter deleted successfully" });
   } catch (error) {

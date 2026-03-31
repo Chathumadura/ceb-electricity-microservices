@@ -16,7 +16,7 @@ const sendValidation = (req, res) => {
 // JWT generator
 const generateToken = (customer) =>
   jwt.sign(
-    { id: customer._id, email: customer.email },
+    { id: customer._id,customerId: customer.customerId,  email: customer.email },
     process.env.JWT_SECRET,
     { expiresIn: '7d' }
   );

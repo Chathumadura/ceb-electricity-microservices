@@ -399,16 +399,30 @@ router.put(
 
 // ─────────────────────────────────────────────────────────────────
 // DELETE /api/readings/:id
-// Only deletes if reading belongs to logged in customer
+// Step 1: Find the reading — if not found, return 404
+// Step 2: Check if it belongs to the logged in customer — if not, return 403
+// Step 3: Delete it
 // ─────────────────────────────────────────────────────────────────
 router.delete("/:id", protect, async (req, res) => {
   try {
-    const reading = await MeterReading.findOneAndDelete({
-      _id: req.params.id,
-      customerId: req.customer.customerId, // ← security check
-    });
+    // Step 1 — find the reading first
+    const reading = await MeterReading.findById(req.params.id);
+
     if (!reading)
-      return res.status(404).json({ success: false, message: "Reading not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Reading not found",
+      });
+
+    // Step 2 — check ownership using token customerId
+    if (reading.customerId !== req.customer.customerId)
+      return res.status(403).json({
+        success: false,
+        message: "Not allowed — you can only delete your own readings",
+      });
+
+    // Step 3 — safe to delete
+    await MeterReading.findByIdAndDelete(req.params.id);
 
     res.status(200).json({ success: true, message: "Reading deleted successfully" });
   } catch (error) {
