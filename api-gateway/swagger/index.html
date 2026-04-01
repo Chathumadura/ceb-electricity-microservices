@@ -1,12 +1,17 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>CEB Unified API Docs</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
   <style>
-    body { margin: 0; background: #f5f7fb; }
+    body {
+      margin: 0;
+      background: #f5f7fb;
+    }
+
     .toolbar {
       position: sticky;
       top: 0;
@@ -18,6 +23,7 @@
       border-bottom: 1px solid #18385f;
       flex-wrap: wrap;
     }
+
     .toolbar button {
       border: 1px solid #2c5a8f;
       background: #10345b;
@@ -27,13 +33,18 @@
       cursor: pointer;
       font-weight: 600;
     }
+
     .toolbar button.active {
       background: #1f7ae0;
       border-color: #1f7ae0;
     }
-    #swagger-ui { margin-top: 0; }
+
+    #swagger-ui {
+      margin-top: 0;
+    }
   </style>
 </head>
+
 <body>
   <div class="toolbar" id="toolbar"></div>
   <div id="swagger-ui"></div>
@@ -173,4 +184,5 @@
     window.onload = init;
   </script>
 </body>
+
 </html>
