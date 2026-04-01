@@ -25,7 +25,9 @@ const swaggerOptions = {
   },
   apis: [path.join(__dirname, "routes", "*.js")],
 };
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerJsdoc(swaggerOptions)));
+const billSwaggerSpec = swaggerJsdoc(swaggerOptions);
+app.get("/api-docs.json", (req, res) => res.json(billSwaggerSpec));
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(billSwaggerSpec));
 app.get("/health", (req, res) => res.json({ status: "healthy", service: "bill-service", port: 3003 }));
 app.use("/api/bills", billRoutes);
 

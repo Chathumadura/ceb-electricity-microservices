@@ -135,6 +135,34 @@ router.get("/:id", protect(), async (req, res, next) => {
 
 /**
  * @swagger
+ * /api/bills/{id}:
+ *   delete:
+ *     summary: Delete bill by ID
+ *     tags: [Bills]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Bill deleted successfully
+ *       404:
+ *         description: Bill not found
+ */
+router.delete("/:id", protect(), async (req, res, next) => {
+  try {
+    const bill = await Bill.findByIdAndDelete(req.params.id);
+    if (!bill) return res.status(404).json({ success: false, message: "Bill not found" });
+    res.json({ success: true, message: "Bill deleted successfully", data: bill });
+  } catch (err) { next(err); }
+});
+
+/**
+ * @swagger
  * /api/bills/generate:
  *   post:
  *     summary: Generate bill (auto-fetches meter, associates with logged-in customer)

@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CEB Unified API Docs</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+  <style>
+    body { margin: 0; background: #f5f7fb; }
+    .toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      display: flex;
+      gap: 8px;
+      padding: 10px 12px;
+      background: #0b1f38;
+      border-bottom: 1px solid #18385f;
+      flex-wrap: wrap;
+    }
+    .toolbar button {
+      border: 1px solid #2c5a8f;
+      background: #10345b;
+      color: #fff;
+      padding: 7px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .toolbar button.active {
+      background: #1f7ae0;
+      border-color: #1f7ae0;
+    }
+    #swagger-ui { margin-top: 0; }
+  </style>
+</head>
+<body>
+  <div class="toolbar" id="toolbar"></div>
+  <div id="swagger-ui"></div>
+
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js" crossorigin></script>
+  <script>
+    const specs = [
+      { key: 'customer', url: '/api-docs-json/customer', name: 'Customer' },
+      { key: 'meter', url: '/api-docs-json/meter', name: 'Meter' },
+      { key: 'bill', url: '/api-docs-json/bill', name: 'Bill' },
+      { key: 'payment', url: '/api-docs-json/payment', name: 'Payment' }
+    ];
+
+    async function loadJson(url) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Failed ${url}: ${res.status}`);
+      return res.json();
+    }
+
+    function mergeSpecs(items) {
+      const merged = {
+        openapi: '3.0.0',
+        info: {
+          title: 'CEB Unified API Docs',
+          version: '1.0.0',
+          description: 'All microservice APIs through API Gateway'
+        },
+        servers: [{ url: 'http://localhost:8080' }],
+        tags: [],
+        paths: {},
+        components: { securitySchemes: {}, schemas: {} }
+      };
+
+      for (const spec of items) {
+        if (Array.isArray(spec.tags)) merged.tags.push(...spec.tags);
+        if (spec.paths) Object.assign(merged.paths, spec.paths);
+        if (spec.components && spec.components.securitySchemes) {
+          Object.assign(merged.components.securitySchemes, spec.components.securitySchemes);
+        }
+        if (spec.components && spec.components.schemas) {
+          Object.assign(merged.components.schemas, spec.components.schemas);
+        }
+      }
+
+      const seen = new Set();
+      merged.tags = merged.tags.filter((t) => {
+        const key = (t && t.name) ? t.name : JSON.stringify(t);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      return merged;
+    }
+
+    let ui;
+    let loadedSpecs = {};
+    const tagOrder = ['Auth', 'Customers', 'Meters', 'Readings', 'Bills', 'Payments'];
+
+    function sortTags(a, b) {
+      const ai = tagOrder.indexOf(a);
+      const bi = tagOrder.indexOf(b);
+      const aPos = ai === -1 ? Number.MAX_SAFE_INTEGER : ai;
+      const bPos = bi === -1 ? Number.MAX_SAFE_INTEGER : bi;
+      if (aPos !== bPos) return aPos - bPos;
+      return a.localeCompare(b);
+    }
+
+    function renderSpec(spec, mode) {
+      const wrapped = {
+        ...spec,
+        servers: [{ url: 'http://localhost:8080' }],
+        info: {
+          ...(spec.info || {}),
+          title: mode === 'all' ? 'CEB Unified API Docs' : `${mode.toUpperCase()} Service API`
+        }
+      };
+
+      if (!ui) {
+        ui = SwaggerUIBundle({
+          spec: wrapped,
+          dom_id: '#swagger-ui',
+          tagsSorter: sortTags,
+          operationsSorter: 'alpha',
+          deepLinking: true,
+          persistAuthorization: true,
+          docExpansion: 'list',
+          defaultModelsExpandDepth: 1
+        });
+      } else {
+        ui.specActions.updateSpec(JSON.stringify(wrapped));
+      }
+    }
+
+    function setActive(key) {
+      document.querySelectorAll('.toolbar button').forEach((b) => {
+        b.classList.toggle('active', b.dataset.key === key);
+      });
+    }
+
+    async function showAll() {
+      setActive('all');
+      renderSpec(mergeSpecs(Object.values(loadedSpecs)), 'all');
+    }
+
+    async function showOne(key) {
+      setActive(key);
+      renderSpec(loadedSpecs[key], key);
+    }
+
+    async function init() {
+      try {
+        const pairs = await Promise.all(specs.map(async (s) => [s.key, await loadJson(s.url)]));
+        loadedSpecs = Object.fromEntries(pairs);
+
+        const toolbar = document.getElementById('toolbar');
+        const allBtn = document.createElement('button');
+        allBtn.textContent = 'All APIs';
+        allBtn.dataset.key = 'all';
+        allBtn.onclick = showAll;
+        toolbar.appendChild(allBtn);
+
+        for (const s of specs) {
+          const btn = document.createElement('button');
+          btn.textContent = s.name;
+          btn.dataset.key = s.key;
+          btn.onclick = () => showOne(s.key);
+          toolbar.appendChild(btn);
+        }
+
+        showAll();
+      } catch (err) {
+        document.getElementById('swagger-ui').innerHTML = `<h2 style="padding:20px;">Failed to load API specs: ${err.message}</h2>`;
+      }
+    }
+
+    window.onload = init;
+  </script>
+</body>
+</html>

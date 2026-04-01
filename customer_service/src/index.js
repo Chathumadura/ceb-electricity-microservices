@@ -26,7 +26,9 @@ const swaggerOptions = {
   },
   apis: [path.join(__dirname, "routes", "*.js")],
 };
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerJsdoc(swaggerOptions)));
+const customerSwaggerSpec = swaggerJsdoc(swaggerOptions);
+app.get("/api-docs.json", (req, res) => res.json(customerSwaggerSpec));
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(customerSwaggerSpec));
 
 app.get("/health", (req, res) => res.json({ status: "healthy", service: "customer-service", port: 3001 }));
 

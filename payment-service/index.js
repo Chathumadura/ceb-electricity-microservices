@@ -35,9 +35,10 @@ const swaggerOptions = {
             },
         },
     },
-    apis: [path.join(__dirname, "routes", "*.js")],
+    apis: [path.join(__dirname, "src", "routes", "*.js")],
 };
 const swaggerSpec = swaggerJsdoc(swaggerOptions);
+app.get("/api-docs.json", (req, res) => res.json(swaggerSpec));
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 // ── Health Check ───────────────────────────────────────────────

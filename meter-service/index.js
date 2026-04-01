@@ -25,7 +25,9 @@ const swaggerOptions = {
   },
   apis: [path.join(__dirname, "src", "routes", "*.js")],
 };
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerJsdoc(swaggerOptions)));
+const meterSwaggerSpec = swaggerJsdoc(swaggerOptions);
+app.get("/api-docs.json", (req, res) => res.json(meterSwaggerSpec));
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(meterSwaggerSpec));
 app.get("/health", (req, res) => res.json({ status: "healthy", service: "meter-service", port: 3002 }));
 app.use("/api/meters", meterRoutes);
 
