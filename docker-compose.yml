@@ -1,0 +1,109 @@
+services:
+
+  # ── MongoDB ────────────────────────────────────────────────────
+  mongo:
+    image: mongo:6
+    container_name: mongo
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - ceb_network
+
+  # ── Customer Service ───────────────────────────────────────────
+  customer_service:
+    build: ./customer_service
+    container_name: customer_service
+    restart: always
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - MONGO_URI=mongodb://mongo:27017/CustomerDB
+      - JWT_SECRET=supersecretkey123
+    depends_on:
+      - mongo
+    networks:
+      - ceb_network
+
+  # ── Meter Service ──────────────────────────────────────────────
+  meter_service:
+    build: ./meter-service
+    container_name: meter_service
+    restart: always
+    ports:
+      - "3002:3002"
+    environment:
+      - PORT=3002
+      - MONGO_URI=mongodb://mongo:27017/MeterDB
+      - JWT_SECRET=supersecretkey123
+    depends_on:
+      - mongo
+    networks:
+      - ceb_network
+
+  # ── Bill Service ───────────────────────────────────────────────
+  bill_service:
+    build: ./bill_service
+    container_name: bill_service
+    restart: always
+    ports:
+      - "3003:3003"
+    environment:
+      - PORT=3003
+      - MONGO_URI=mongodb://mongo:27017/BillDB
+      - JWT_SECRET=supersecretkey123
+      - CUSTOMER_SERVICE_URL=http://customer_service:3001
+      - METER_SERVICE_URL=http://meter_service:3002
+    depends_on:
+      - mongo
+      - customer_service
+      - meter_service
+    networks:
+      - ceb_network
+
+  # ── Payment Service ────────────────────────────────────────────
+  payment_service:
+    build: ./payment-service
+    container_name: payment_service
+    restart: always
+    ports:
+      - "3004:3004"
+    environment:
+      - PORT=3004
+      - MONGO_URI=mongodb://mongo:27017/PaymentDB
+      - JWT_SECRET=supersecretkey123
+      - CUSTOMER_SERVICE_URL=http://customer_service:3001
+      - BILL_SERVICE_URL=http://bill_service:3003
+    depends_on:
+      - mongo
+      - customer_service
+      - bill_service
+    networks:
+      - ceb_network
+
+  # ── API Gateway (Nginx) ────────────────────────────────────────
+  api_gateway:
+    build: ./api-gateway
+    container_name: api_gateway
+    restart: always
+    ports:
+      - "8080:8080"
+    depends_on:
+      - customer_service
+      - meter_service
+      - bill_service
+      - payment_service
+    networks:
+      - ceb_network
+
+# ── Volumes ────────────────────────────────────────────────────
+volumes:
+  mongo_data:
+
+    # ── Networks ───────────────────────────────────────────────────
+networks:
+  ceb_network:
+    driver: bridge
