@@ -140,6 +140,55 @@ router.post("/", protect(), async (req, res, next) => {
 /**
  * @swagger
  * /api/meters/{id}:
+ *   put:
+ *     summary: Update meter details
+ *     tags: [Meters]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               meterNumber: { type: string, example: "MT-10234" }
+ *               location:    { type: string, example: "Colombo 03" }
+ *               meterType:   { type: string, example: "Three Phase" }
+ *               status:      { type: string, example: "active" }
+ *     responses:
+ *       200:
+ *         description: Meter updated
+ */
+router.put("/:id", protect(), async (req, res, next) => {
+  try {
+    const { meterNumber, location, meterType, status } = req.body;
+    const updateData = {};
+
+    if (meterNumber !== undefined) updateData.meterNumber = meterNumber;
+    if (location !== undefined) updateData.location = location;
+    if (meterType !== undefined) updateData.meterType = meterType;
+    if (status !== undefined) updateData.status = status;
+
+    const meter = await Meter.findByIdAndUpdate(req.params.id, updateData, {
+      new: true,
+      runValidators: true,
+    });
+
+    if (!meter) return res.status(404).json({ success: false, message: "Meter not found" });
+    res.json({ success: true, data: meter });
+  } catch (err) { next(err); }
+});
+
+/**
+ * @swagger
+ * /api/meters/{id}:
  *   delete:
  *     summary: Delete meter
  *     tags: [Meters]
@@ -274,6 +323,90 @@ router.post("/readings", protect(), async (req, res, next) => {
     await meter.save();
 
     res.status(201).json({ success: true, data: reading });
+  } catch (err) { next(err); }
+});
+
+/**
+ * @swagger
+ * /api/meters/readings/{id}:
+ *   put:
+ *     summary: Update an existing reading
+ *     tags: [Readings]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               currentReading: { type: number, example: 1400 }
+ *               readingMonth:   { type: string, example: "April 2026" }
+ *               recordedBy:     { type: string, example: "Inspector-02" }
+ *     responses:
+ *       200:
+ *         description: Reading updated
+ */
+router.put("/readings/:id", protect(), async (req, res, next) => {
+  try {
+    const reading = await Reading.findById(req.params.id);
+    if (!reading) return res.status(404).json({ success: false, message: "Reading not found" });
+
+    const { currentReading, readingMonth, recordedBy } = req.body;
+
+    if (currentReading !== undefined) reading.currentReading = Number(currentReading);
+    if (readingMonth !== undefined) reading.readingMonth = readingMonth;
+    if (recordedBy !== undefined) reading.recordedBy = recordedBy;
+
+    await reading.save();
+
+    const latestReading = await Reading.findOne({ meterId: reading.meterId }).sort({ createdAt: -1 });
+    await Meter.findByIdAndUpdate(reading.meterId, {
+      lastReadingValue: latestReading ? Number(latestReading.currentReading) : 0,
+      lastReadingDate: latestReading ? latestReading.createdAt : null,
+    });
+
+    res.json({ success: true, data: reading });
+  } catch (err) { next(err); }
+});
+
+/**
+ * @swagger
+ * /api/meters/readings/{id}:
+ *   delete:
+ *     summary: Delete a reading
+ *     tags: [Readings]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Reading deleted
+ */
+router.delete("/readings/:id", protect(), async (req, res, next) => {
+  try {
+    const reading = await Reading.findByIdAndDelete(req.params.id);
+    if (!reading) return res.status(404).json({ success: false, message: "Reading not found" });
+
+    const latestReading = await Reading.findOne({ meterId: reading.meterId }).sort({ createdAt: -1 });
+    await Meter.findByIdAndUpdate(reading.meterId, {
+      lastReadingValue: latestReading ? Number(latestReading.currentReading) : 0,
+      lastReadingDate: latestReading ? latestReading.createdAt : null,
+    });
+
+    res.json({ success: true, message: "Reading deleted" });
   } catch (err) { next(err); }
 });
 
