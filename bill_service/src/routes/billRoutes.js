@@ -214,7 +214,7 @@ router.post("/generate", protect(), async (req, res, next) => {
       return res.status(404).json({ success: false, message: "No meter found for customer" });
     }
 
-    // ── Step 3: Latest reading ගන්නවා ──
+    // ── Step 3: Latest reading  ──
     let latestReading;
     try {
       const readingRes = await axios.get(`${METER_SERVICE_URL}/api/meters/readings/${meterId}`, {

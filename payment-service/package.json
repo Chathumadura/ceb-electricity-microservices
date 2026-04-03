@@ -2,10 +2,10 @@
   "name": "payment-service",
   "version": "1.0.0",
   "description": "CEB Payment Processing Microservice - IT4020 Assignment 2",
-  "main": "src/index.js",
+  "main": "index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "nodemon src/index.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
   "dependencies": {
     "axios": "^1.6.0",
